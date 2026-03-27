@@ -1,0 +1,250 @@
+from bisect import bisect_left
+
+import numpy as np
+import plotly.graph_objects as go
+
+N_SAMPLES = 1_000_000
+N_CUTOFF_SAMPLES = 1_000_000
+
+# ((x_min, x_max), (a, b)) -> y = a * x + b if x_min <= x < x_max
+DAMAGE_FUNC = [
+    ((0, 4000000), (1.0, 0)),
+    ((4000000, 6248000), (0.8, 4000000 - 0.8 * 4000000)),
+    ((6248000, 8496000), (0.65, 5798400 - 0.65 * 6248000)),
+    ((8496000, 10744000), (0.5, 7259600 - 0.5 * 8496000)),
+    ((10744000, 12992000), (0.4, 8383600 - 0.4 * 10744000)),
+    ((12992000, 15240000), (0.3, 9282800 - 0.3 * 12992000)),
+    ((15240000, 17488000), (0.225, 9957200 - 0.225 * 15240000)),
+    ((17488000, 19736000), (0.15, 10463000 - 0.15 * 17488000)),
+    ((19736000, 22000000), (0.075, 10800200 - 0.075 * 19736000)),
+    ((22000000, 10**20), (0.0, 10966999)),
+]
+
+# 逆変換テーブル: 減衰後の境界値 y = a * x_min + b を事前計算
+_INVERSE_TABLE: list[tuple[tuple[float, float], float, float]] = []
+for (x_lo, x_hi), (a, b) in DAMAGE_FUNC:
+    y_lo = a * x_lo + b
+    y_hi = a * x_hi + b
+    _INVERSE_TABLE.append(((y_lo, y_hi), a, b))
+
+
+def decay(x: np.ndarray) -> np.ndarray:
+    """減衰関数: 生ダメージ x → 減衰後ダメージ y"""
+    y = np.empty_like(x)
+    for (x_lo, x_hi), (a, b) in DAMAGE_FUNC:
+        mask = (x >= x_lo) & (x < x_hi)
+        y[mask] = a * x[mask] + b
+    return y
+
+
+def inverse_decay(y: float) -> float:
+    """逆変換: 減衰後ダメージ y → 生ダメージ x (スカラー)"""
+    for (y_lo, y_hi), a, b in _INVERSE_TABLE:
+        lo, hi = min(y_lo, y_hi), max(y_lo, y_hi)
+        if lo <= y <= hi:
+            if a == 0.0:
+                return DAMAGE_FUNC[-1][0][0]  # 上限キャップ
+            return (y - b) / a
+    # テーブル範囲外は恒等
+    return y
+
+
+def generate_damage(
+    rng: np.random.Generator,
+    low: float,
+    high: float,
+    n: int,
+    damage_mode: str,
+) -> np.ndarray:
+    """モードに応じたダメージサンプルを生成し、減衰後の値を返す。"""
+    if damage_mode == "post_decay":
+        # 入力は減衰後 → 逆変換して生ダメージ範囲を求める
+        raw_low = inverse_decay(low)
+        raw_high = inverse_decay(high)
+    else:
+        # 入力は生ダメージそのまま
+        raw_low = low
+        raw_high = high
+
+    raw_samples = rng.uniform(raw_low, max(raw_high, raw_low), n)
+    return decay(raw_samples)
+
+
+def run_simulation(
+    indices: list[int],
+    params: dict[int, dict],
+    global_crit: float,
+    global_evade: float,
+    target_damage: float,
+    damage_mode: str = "post_decay",
+) -> tuple[go.Figure, str]:
+    """モンテカルロ法でダメージ分布をシミュレーションし、Figureと通過率テキストを返す。"""
+    rng = np.random.default_rng()
+    total_damage = np.zeros(N_SAMPLES)
+
+    for idx in indices:
+        p = params.get(idx)
+        if p is None:
+            continue
+
+        crit_min = float(p.get("crit_min") or 0)
+        crit_max = float(p.get("crit_max") or 0)
+        normal_min = float(p.get("normal_min") or 0)
+        normal_max = float(p.get("normal_max") or 0)
+        hits = int(p.get("hits") or 1)
+        crit_rate = p.get("crit_rate")
+        evade_rate = p.get("evade_rate")
+        crit_rate = float(crit_rate if crit_rate is not None else global_crit or 0) / 100.0
+        evade_rate = float(evade_rate if evade_rate is not None else global_evade or 0) / 100.0
+
+        for _ in range(hits):
+            hit_mask = rng.random(N_SAMPLES) >= evade_rate
+            is_crit = rng.random(N_SAMPLES) < crit_rate
+            dmg = np.where(
+                is_crit,
+                generate_damage(rng, crit_min, crit_max, N_SAMPLES, damage_mode),
+                generate_damage(rng, normal_min, normal_max, N_SAMPLES, damage_mode),
+            )
+            total_damage += dmg * hit_mask
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=total_damage, nbinsx=200, name="ダメージ分布"))
+    fig.update_layout(
+        title="合計ダメージ分布",
+        xaxis_title="合計ダメージ",
+        yaxis_title="頻度",
+        bargap=0.05,
+    )
+
+    mean_val = np.mean(total_damage)
+    fig.add_vline(x=mean_val, line_dash="dash", line_color="red", annotation_text=f"期待値: {mean_val:,.0f}")
+
+    target = float(target_damage or 0)
+    pass_rate = float(np.mean(total_damage >= target) * 100) if target > 0 else None
+    pass_text = ""
+    if target > 0:
+        fig.add_vline(x=target, line_dash="solid", line_color="green", annotation_text=f"目標: {target:,.0f}")
+        pass_text = f"目標ダメージ {target:,.0f} の通過確率: {pass_rate:.2f}%"
+
+    return fig, pass_text
+
+
+def _simulate_cards(
+    indices: list[int],
+    params: dict[int, dict],
+    global_crit: float,
+    global_evade: float,
+    damage_mode: str,
+    n_samples: int = N_CUTOFF_SAMPLES,
+) -> np.ndarray:
+    """指定カード群の合計ダメージをシミュレーションし、ソート済み配列を返す。"""
+    rng = np.random.default_rng()
+    total = np.zeros(n_samples)
+
+    for idx in indices:
+        p = params.get(idx)
+        if p is None:
+            continue
+        crit_min = float(p.get("crit_min") or 0)
+        crit_max = float(p.get("crit_max") or 0)
+        normal_min = float(p.get("normal_min") or 0)
+        normal_max = float(p.get("normal_max") or 0)
+        hits = int(p.get("hits") or 1)
+        crit_rate = p.get("crit_rate")
+        evade_rate = p.get("evade_rate")
+        crit_rate = float(crit_rate if crit_rate is not None else global_crit or 0) / 100.0
+        evade_rate = float(evade_rate if evade_rate is not None else global_evade or 0) / 100.0
+
+        for _ in range(hits):
+            hit_mask = rng.random(n_samples) >= evade_rate
+            is_crit = rng.random(n_samples) < crit_rate
+            dmg = np.where(
+                is_crit,
+                generate_damage(rng, crit_min, crit_max, n_samples, damage_mode),
+                generate_damage(rng, normal_min, normal_max, n_samples, damage_mode),
+            )
+            total += dmg * hit_mask
+
+    total.sort()
+    return total
+
+
+def _build_lookup_table(sorted_samples: np.ndarray, n_points: int = 2000) -> dict:
+    """ソート済みサンプルから補間用ルックアップテーブルを構築する。"""
+    n = len(sorted_samples)
+    if n == 0:
+        return {"values": [], "min": 0.0, "max": 0.0}
+    step = max(1, n // n_points)
+    values = sorted_samples[::step].tolist()
+    return {
+        "values": values,
+        "min": float(sorted_samples[0]),
+        "max": float(sorted_samples[-1]),
+    }
+
+
+def exceedance_prob(table: dict, threshold: float) -> float:
+    """ルックアップテーブルから P(X >= threshold) を % で返す。"""
+    values = table.get("values", [])
+    if not values:
+        return 0.0
+    idx = bisect_left(values, threshold)
+    cdf = idx / len(values)
+    return round((1 - cdf) * 100, 2)
+
+
+def value_at_exceedance(table: dict, exceedance_pct: float) -> float:
+    """ルックアップテーブルから指定超過確率に対応するダメージ値を返す。"""
+    values = table.get("values", [])
+    if not values:
+        return 0.0
+    cdf = 1 - exceedance_pct / 100
+    idx = int(cdf * (len(values) - 1))
+    idx = max(0, min(idx, len(values) - 1))
+    return round(values[idx], 0)
+
+
+def compute_cutoff(
+    order: list,
+    params: dict[int, dict],
+    global_crit: float,
+    global_evade: float,
+    target_damage: float,
+    damage_mode: str,
+) -> dict:
+    """足切り位置で上側・下側の分布を計算し、初期値 (超過確率50%) で返す。"""
+    # order 内の "cutoff_0" で上下に分割
+    cutoff_pos = None
+    for i, x in enumerate(order):
+        if isinstance(x, str) and x.startswith("cutoff"):
+            cutoff_pos = i
+            break
+    if cutoff_pos is None:
+        return {}
+
+    upper_indices = [x for x in order[:cutoff_pos] if isinstance(x, int)]
+    lower_indices = [x for x in order[cutoff_pos + 1 :] if isinstance(x, int)]
+
+    upper_table = _build_lookup_table(_simulate_cards(
+        upper_indices, params, global_crit, global_evade, damage_mode
+    ))
+    lower_table = _build_lookup_table(_simulate_cards(
+        lower_indices, params, global_crit, global_evade, damage_mode
+    ))
+
+    target = float(target_damage or 0)
+
+    # 初期値: 超過確率 50%
+    e2 = 50.0
+    e1 = value_at_exceedance(upper_table, e2)
+    e3 = max(target - e1, 0)
+    e4 = exceedance_prob(lower_table, e3)
+
+    return {
+        "upper_table": upper_table,
+        "lower_table": lower_table,
+        "e1": e1,
+        "e2": e2,
+        "e3": e3,
+        "e4": e4,
+    }
