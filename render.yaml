@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: damage-cutoff-simulator
+    runtime: python
+    buildCommand: pip install .
+    startCommand: gunicorn main:application.server -b 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
