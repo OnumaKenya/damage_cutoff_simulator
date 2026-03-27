@@ -3,8 +3,8 @@ from bisect import bisect_left
 import numpy as np
 import plotly.graph_objects as go
 
-N_SAMPLES = 1_000_000
-N_CUTOFF_SAMPLES = 1_000_000
+N_SAMPLES = 500_000
+N_CUTOFF_SAMPLES = 500_000
 
 # ((x_min, x_max), (a, b)) -> y = a * x + b if x_min <= x < x_max
 DAMAGE_FUNC = [

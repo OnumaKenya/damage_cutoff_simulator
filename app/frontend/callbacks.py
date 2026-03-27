@@ -12,7 +12,7 @@ from app.backend.simulation import (
     exceedance_prob,
     value_at_exceedance,
 )
-from app.frontend.layout import make_damage_card, make_cutoff_card
+from app.frontend.layout import make_damage_card, make_cutoff_card, log_slider_to_pct, pct_to_log_slider
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,7 @@ def sync_drag_order(drag_order, indices):
     Input("add-cutoff-btn", "n_clicks"),
     Input({"type": "remove-btn", "index": ALL}, "n_clicks"),
     Input({"type": "cutoff-remove", "index": ALL}, "n_clicks"),
+    Input({"type": "duplicate-btn", "index": ALL}, "n_clicks"),
     State("card-indices", "data"),
     State("next-index", "data"),
     State("cards-container", "children"),
@@ -75,12 +76,17 @@ def sync_drag_order(drag_order, indices):
     State("global-evade-rate", "value"),
     State("cutoff-indices", "data"),
     State("cutoff-next-index", "data"),
+    State({"type": "param", "param": ALL, "index": ALL}, "value"),
+    State({"type": "param", "param": ALL, "index": ALL}, "id"),
+    State({"type": "memo", "index": ALL}, "value"),
+    State({"type": "memo", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
 def update_cards(
-    add_clicks, add_cutoff_clicks, remove_clicks, cutoff_remove_clicks,
+    add_clicks, add_cutoff_clicks, remove_clicks, cutoff_remove_clicks, duplicate_clicks,
     indices, next_idx, children, global_crit, global_evade,
     cutoff_indices, cutoff_next_idx,
+    param_values, param_ids, memo_values, memo_ids,
 ):
     trigger = ctx.triggered_id
 
@@ -115,6 +121,32 @@ def update_cards(
             if not (c["props"]["id"].get("type") == "cutoff" and c["props"]["id"].get("index") == remove_idx)
         ]
         return children, indices, next_idx, cutoff_indices, cutoff_next_idx
+
+    if isinstance(trigger, dict) and trigger.get("type") == "duplicate-btn":
+        src_idx = trigger["index"]
+        # 元カードのパラメータを収集
+        src_params = {}
+        for val, pid in zip(param_values, param_ids):
+            if pid["index"] == src_idx:
+                src_params[pid["param"]] = val
+        # 元カードのメモを取得
+        src_memo = ""
+        for val, mid in zip(memo_values, memo_ids):
+            if mid["index"] == src_idx:
+                src_memo = val or ""
+                break
+        # 元カードの直後に挿入
+        new_card = make_damage_card(next_idx, params=src_params, memo=src_memo)
+        src_pos = next(
+            (i for i, c in enumerate(children)
+             if c["props"]["id"].get("type") == "card" and c["props"]["id"].get("index") == src_idx),
+            len(children),
+        )
+        children.insert(src_pos + 1, new_card)
+        # indices にも同じ位置の後に挿入
+        idx_pos = indices.index(src_idx) if src_idx in indices else len(indices)
+        indices.insert(idx_pos + 1, next_idx)
+        return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx
 
     raise PreventUpdate
 
@@ -295,13 +327,25 @@ def on_cutoff_slider_change(slider_vals, current_values, dist, target_damage, sl
         raise PreventUpdate
     val = float(val)
 
-    # エコーバック防止
+    # パーセントスライダーは対数内部値 → 実パーセントへ変換
+    is_pct = elem in ("e2", "e4")
+    if is_pct:
+        pct_val = log_slider_to_pct(val)
+    else:
+        pct_val = val
+
+    # エコーバック防止（パーセント系は対数空間で比較）
     if current_values:
         card_values = current_values.get(cutoff_key)
         if card_values:
-            current_val = float(card_values.get(elem, float("inf")))
-            if abs(val - current_val) < 0.5:
-                raise PreventUpdate
+            current_stored = float(card_values.get(elem, float("inf")))
+            if is_pct:
+                current_log = pct_to_log_slider(current_stored)
+                if abs(val - current_log) < 1.5:
+                    raise PreventUpdate
+            else:
+                if abs(val - current_stored) < 0.5:
+                    raise PreventUpdate
 
     target = float(target_damage or 0)
     upper = dist[cutoff_key]["upper_table"]
@@ -309,22 +353,22 @@ def on_cutoff_slider_change(slider_vals, current_values, dist, target_damage, sl
 
     # 軽量なルックアップ計算のみ
     if elem == "e1":
-        e1 = val
+        e1 = pct_val
         e2 = exceedance_prob(upper, e1)
         e3 = max(target - e1, 0)
         e4 = exceedance_prob(lower, e3)
     elif elem == "e2":
-        e2 = val
+        e2 = pct_val
         e1 = value_at_exceedance(upper, e2)
         e3 = max(target - e1, 0)
         e4 = exceedance_prob(lower, e3)
     elif elem == "e3":
-        e3 = val
+        e3 = pct_val
         e1 = max(target - e3, 0)
         e2 = exceedance_prob(upper, e1)
         e4 = exceedance_prob(lower, e3)
     elif elem == "e4":
-        e4 = val
+        e4 = pct_val
         e3 = value_at_exceedance(lower, e4)
         e1 = max(target - e3, 0)
         e2 = exceedance_prob(upper, e1)
@@ -360,7 +404,12 @@ def update_cutoff_display(values, dist, slider_ids):
         card_dist = dist.get(key)
 
         if card_vals:
-            s_vals.append(card_vals.get(elem, 0))
+            raw = card_vals.get(elem, 0)
+            # パーセント系は実パーセント → 対数スライダー値に変換
+            if elem in ("e2", "e4"):
+                s_vals.append(pct_to_log_slider(float(raw)))
+            else:
+                s_vals.append(raw)
         else:
             s_vals.append(dash.no_update)
 
@@ -379,3 +428,107 @@ def update_cutoff_display(values, dist, slider_ids):
             s_maxs.append(dash.no_update)
 
     return s_vals, s_mins, s_maxs
+
+
+# ---------------------------------------------------------------------------
+# % Input 直接入力 → Store 更新
+# ---------------------------------------------------------------------------
+@callback(
+    Output("cutoff-values-store", "data", allow_duplicate=True),
+    Input({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "value"),
+    State("cutoff-values-store", "data"),
+    State("cutoff-dist-store", "data"),
+    State("target-damage", "value"),
+    State({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def on_cutoff_pct_input_change(input_vals, current_values, dist, target_damage, input_ids):
+    trigger = ctx.triggered_id
+    if not isinstance(trigger, dict):
+        raise PreventUpdate
+
+    cutoff_key = str(trigger["index"])
+    elem = trigger["elem"]
+
+    if not dist or cutoff_key not in dist:
+        raise PreventUpdate
+
+    idx_in_list = next(
+        (i for i, sid in enumerate(input_ids) if sid["elem"] == elem and sid["index"] == trigger["index"]),
+        None,
+    )
+    if idx_in_list is None:
+        raise PreventUpdate
+    val = input_vals[idx_in_list]
+    if val is None:
+        raise PreventUpdate
+    val = max(0.01, min(100, float(val)))
+
+    # エコーバック防止
+    if current_values:
+        card_values = current_values.get(cutoff_key)
+        if card_values:
+            current_stored = float(card_values.get(elem, float("inf")))
+            if abs(val - current_stored) < 0.005:
+                raise PreventUpdate
+
+    target = float(target_damage or 0)
+    upper = dist[cutoff_key]["upper_table"]
+    lower = dist[cutoff_key]["lower_table"]
+
+    if elem == "e2":
+        e2 = val
+        e1 = value_at_exceedance(upper, e2)
+        e3 = max(target - e1, 0)
+        e4 = exceedance_prob(lower, e3)
+    elif elem == "e4":
+        e4 = val
+        e3 = value_at_exceedance(lower, e4)
+        e1 = max(target - e3, 0)
+        e2 = exceedance_prob(upper, e1)
+    else:
+        raise PreventUpdate
+
+    new_values = dict(current_values or {})
+    new_values[cutoff_key] = {"e1": round(e1, 0), "e2": round(e2, 2), "e3": round(e3, 0), "e4": round(e4, 2)}
+    return new_values
+
+
+# ---------------------------------------------------------------------------
+# Store → % Input 表示同期
+# ---------------------------------------------------------------------------
+@callback(
+    Output({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "value", allow_duplicate=True),
+    Input("cutoff-values-store", "data"),
+    State({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def update_pct_input_display(values, input_ids):
+    if not values:
+        raise PreventUpdate
+
+    out = []
+    for sid in input_ids:
+        key = str(sid["index"])
+        elem = sid["elem"]
+        card_vals = values.get(key)
+        if card_vals:
+            out.append(round(float(card_vals.get(elem, 0)), 2))
+        else:
+            out.append(dash.no_update)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# マニュアルモーダル開閉
+# ---------------------------------------------------------------------------
+@callback(
+    Output("manual-modal", "style"),
+    Input("open-manual-btn", "n_clicks"),
+    Input("close-manual-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_manual_modal(open_clicks, close_clicks):
+    if ctx.triggered_id == "open-manual-btn":
+        return {"display": "flex"}
+    return {"display": "none"}

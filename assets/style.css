@@ -37,10 +37,53 @@ input[type="number"] {
     opacity: 0.4;
 }
 
-/* 足切りカードのスライダー調整 */
-#cutoff-e1-slider .rc-slider,
-#cutoff-e2-slider .rc-slider,
-#cutoff-e3-slider .rc-slider,
-#cutoff-e4-slider .rc-slider {
+/* ダメージ値スライダーの入力ボックスを広げる */
+.dash-range-slider-input {
+    width: calc(8ch + calc(var(--Dash-Spacing) * 2)) !important;
+}
+
+/* 対数パーセントスライダーの内部値入力ボックスを非表示 */
+.log-slider-wrap .dash-range-slider-input {
+    display: none !important;
+}
+
+/* 足切りカードのスライダー marks ラベルが下の行と被らないよう余白確保 */
+.log-slider-wrap .rc-slider {
+    margin-bottom: 28px;
+}
+
+/* マニュアルモーダル */
+.manual-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.manual-modal-content {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px;
+    width: 90vw;
+    max-width: 800px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+.manual-modal-content table {
+    border-collapse: collapse;
+    width: 100%;
     margin: 8px 0;
+}
+.manual-modal-content th,
+.manual-modal-content td {
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    text-align: left;
+}
+.manual-modal-content th {
+    background: #f5f5f5;
 }
