@@ -327,22 +327,45 @@ def create_layout() -> html.Div:
         [
             html.Div(
                 [
-                    html.H1("ブルアカダメージ足切りシミュレータ", style={"marginBottom": "0"}),
-                    html.Button(
-                        "📖 マニュアル",
-                        id="open-manual-btn",
-                        n_clicks=0,
-                        style={
-                            "marginLeft": "auto",
-                            "background": "#4a90d9",
-                            "color": "white",
-                            "border": "none",
-                            "borderRadius": "4px",
-                            "padding": "6px 16px",
-                            "cursor": "pointer",
-                            "fontSize": "0.9rem",
-                            "whiteSpace": "nowrap",
-                        },
+                    html.H1("ブルアカダメージ足切りシミュレータ(α版)", style={"marginBottom": "0"}),
+                    html.Div(
+                        [
+                            html.Button(
+                                "📖 マニュアル",
+                                id="open-manual-btn",
+                                n_clicks=0,
+                                style={
+                                    "background": "#4a90d9",
+                                    "color": "white",
+                                    "border": "none",
+                                    "borderRadius": "4px",
+                                    "padding": "6px 16px",
+                                    "cursor": "pointer",
+                                    "fontSize": "0.9rem",
+                                    "whiteSpace": "nowrap",
+                                },
+                            ),
+                            
+                            html.Span(
+                                [
+                                    "不具合報告、要望などは",
+                                    html.A(
+                                        "こちら",
+                                        href="https://x.com/yankeiori",
+                                        target="_blank",
+                                        rel="noopener noreferrer",
+                                        style={"color": "#4a90d9"},
+                                    ),
+                                    "まで",
+                                ],
+                                style={
+                                    "fontSize": "0.85rem",
+                                    "color": "#555",
+                                    "whiteSpace": "nowrap",
+                                },
+                            ),
+                        ],
+                        style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "gap": "12px"},
                     ),
                 ],
                 style={"display": "flex", "alignItems": "center", "marginBottom": "16px"},
