@@ -37,6 +37,24 @@ def _split_order_at_cutoff(order: list, cutoff_index: int) -> tuple[list[int], l
     return upper, lower
 
 
+def _order_from_children(children: list) -> list:
+    """children の並び順から sorted-indices 用の順序リストを構築する。"""
+    order = []
+    for c in children:
+        # Dash コンポーネントの場合は属性アクセス、辞書の場合はキーアクセス
+        if isinstance(c, dict):
+            cid = c.get("props", {}).get("id", {})
+        else:
+            cid = getattr(c, "id", {})
+        if not isinstance(cid, dict):
+            continue
+        if cid.get("type") == "card":
+            order.append(cid["index"])
+        elif cid.get("type") == "cutoff":
+            order.append(f"cutoff_{cid['index']}")
+    return order
+
+
 # ---------------------------------------------------------------------------
 # ドラッグ順同期
 # ---------------------------------------------------------------------------
@@ -64,6 +82,7 @@ def sync_drag_order(drag_order, indices):
     Output("next-index", "data"),
     Output("cutoff-indices", "data"),
     Output("cutoff-next-index", "data"),
+    Output("sorted-indices", "data", allow_duplicate=True),
     Input("add-btn", "n_clicks"),
     Input("add-cutoff-btn", "n_clicks"),
     Input({"type": "remove-btn", "index": ALL}, "n_clicks"),
@@ -93,23 +112,23 @@ def update_cards(
     if trigger == "add-btn":
         indices.append(next_idx)
         children.append(make_damage_card(next_idx, global_crit, global_evade))
-        return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx
+        return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx, _order_from_children(children)
 
     if trigger == "add-cutoff-btn":
         children.append(make_cutoff_card(cutoff_next_idx))
         cutoff_indices.append(cutoff_next_idx)
-        return children, indices, next_idx, cutoff_indices, cutoff_next_idx + 1
+        return children, indices, next_idx, cutoff_indices, cutoff_next_idx + 1, _order_from_children(children)
 
     if isinstance(trigger, dict) and trigger.get("type") == "remove-btn":
         remove_idx = trigger["index"]
         if len(indices) <= 1:
-            return children, indices, next_idx, cutoff_indices, cutoff_next_idx
+            return children, indices, next_idx, cutoff_indices, cutoff_next_idx, dash.no_update
         indices = [i for i in indices if i != remove_idx]
         children = [
             c for c in children
             if not (c["props"]["id"].get("type") == "card" and c["props"]["id"].get("index") == remove_idx)
         ]
-        return children, indices, next_idx, cutoff_indices, cutoff_next_idx
+        return children, indices, next_idx, cutoff_indices, cutoff_next_idx, _order_from_children(children)
 
     if isinstance(trigger, dict) and trigger.get("type") == "cutoff-remove":
         if not any(n for n in cutoff_remove_clicks if n):
@@ -120,7 +139,7 @@ def update_cards(
             c for c in children
             if not (c["props"]["id"].get("type") == "cutoff" and c["props"]["id"].get("index") == remove_idx)
         ]
-        return children, indices, next_idx, cutoff_indices, cutoff_next_idx
+        return children, indices, next_idx, cutoff_indices, cutoff_next_idx, _order_from_children(children)
 
     if isinstance(trigger, dict) and trigger.get("type") == "duplicate-btn":
         src_idx = trigger["index"]
@@ -139,7 +158,7 @@ def update_cards(
         new_card = make_damage_card(next_idx, params=src_params, memo=src_memo)
         children.append(new_card)
         indices.append(next_idx)
-        return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx
+        return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx, _order_from_children(children)
 
     raise PreventUpdate
 
