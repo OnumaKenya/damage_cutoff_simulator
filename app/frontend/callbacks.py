@@ -135,17 +135,10 @@ def update_cards(
             if mid["index"] == src_idx:
                 src_memo = val or ""
                 break
-        # 元カードの直後に挿入
+        # 一番下に追加
         new_card = make_damage_card(next_idx, params=src_params, memo=src_memo)
-        src_pos = next(
-            (i for i, c in enumerate(children)
-             if c["props"]["id"].get("type") == "card" and c["props"]["id"].get("index") == src_idx),
-            len(children),
-        )
-        children.insert(src_pos + 1, new_card)
-        # indices にも同じ位置の後に挿入
-        idx_pos = indices.index(src_idx) if src_idx in indices else len(indices)
-        indices.insert(idx_pos + 1, next_idx)
+        children.append(new_card)
+        indices.append(next_idx)
         return children, indices, next_idx + 1, cutoff_indices, cutoff_next_idx
 
     raise PreventUpdate

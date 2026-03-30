@@ -206,6 +206,12 @@ def make_cutoff_card(index: int) -> html.Div:
                 [
                     html.Span("⠿", className="drag-handle"),
                     html.Strong(f"✂ 足切りライン {index + 1}", style={"color": "#d63031"}),
+                    dcc.Input(
+                        id={"type": "cutoff-memo", "index": index},
+                        type="text",
+                        placeholder="備考",
+                        style={"marginLeft": "8px", "flex": "1", "fontSize": "0.85rem"},
+                    ),
                     html.Button(
                         "足切り計算",
                         id={"type": "cutoff-compute", "index": index},
