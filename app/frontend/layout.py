@@ -241,13 +241,19 @@ def make_cutoff_card(index: int) -> html.Div:
                 ],
                 style={"display": "flex", "alignItems": "center", "marginBottom": "12px"},
             ),
-            _cutoff_element_row("足切り値", "e1", index),
-            _cutoff_element_row("足切り通過確率", "e2", index, is_percent=True),
-            _cutoff_element_row("残り必要ダメージ", "e3", index),
-            _cutoff_element_row("残り通過確率", "e4", index, is_percent=True),
-            html.Div(
-                id={"type": "cutoff-status", "index": index},
-                style={"fontSize": "0.85rem", "color": "#666", "marginTop": "4px"},
+            dcc.Loading(
+                [
+                    _cutoff_element_row("足切り値", "e1", index),
+                    _cutoff_element_row("足切り通過確率", "e2", index, is_percent=True),
+                    _cutoff_element_row("残り必要ダメージ", "e3", index),
+                    _cutoff_element_row("残り通過確率", "e4", index, is_percent=True),
+                    html.Div(
+                        id={"type": "cutoff-status", "index": index},
+                        style={"fontSize": "0.85rem", "color": "#666", "marginTop": "4px"},
+                    ),
+                ],
+                type="circle",
+                color="#d63031",
             ),
         ],
         id={"type": "cutoff", "index": index},
@@ -433,8 +439,14 @@ def create_layout() -> html.Div:
                                 ],
                                 style={"marginBottom": "16px"},
                             ),
-                            html.Div(id="pass-rate-text", style={"fontSize": "1.2rem", "fontWeight": "bold", "marginBottom": "8px"}),
-                            dcc.Graph(id="result-graph"),
+                            dcc.Loading(
+                                [
+                                    html.Div(id="pass-rate-text", style={"fontSize": "1.2rem", "fontWeight": "bold", "marginBottom": "8px"}),
+                                    dcc.Graph(id="result-graph"),
+                                ],
+                                type="circle",
+                                color="#4a90d9",
+                            ),
                         ],
                         style={"flex": "1", "minWidth": "0"},
                     ),
