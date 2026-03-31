@@ -16,3 +16,8 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# PyInstaller
+build/
+dist/
+*.spec

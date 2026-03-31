@@ -1,9 +1,16 @@
 import math
+import sys
 from pathlib import Path
 
 from dash import html, dcc
 
-_MANUAL_MD = (Path(__file__).resolve().parent.parent.parent / "docs" / "manual.md").read_text(encoding="utf-8")
+# PyInstaller バンドル時は _MEIPASS、通常時はプロジェクトルート
+if getattr(sys, "frozen", False):
+    _BASE_DIR = Path(sys._MEIPASS)
+else:
+    _BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+_MANUAL_MD = (_BASE_DIR / "docs" / "manual.md").read_text(encoding="utf-8")
 
 DEFAULT_CRIT_RATE = 60
 DEFAULT_EVADE_RATE = 0
