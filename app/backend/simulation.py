@@ -1,10 +1,12 @@
 from bisect import bisect_left
+import os
 
 import numpy as np
 import plotly.graph_objects as go
 
-N_SAMPLES = 200_000
-N_CUTOFF_SAMPLES = 200_000
+N_SAMPLES = int(os.environ.get("N_SAMPLES", 200_000))
+N_CUTOFF_SAMPLES = int(os.environ.get("N_CUTOFF_SAMPLES", 200_000))
+_CHUNK_SIZE = 50_000
 
 # ((x_min, x_max), (a, b)) -> y = a * x + b if x_min <= x < x_max
 DAMAGE_FUNC = [
@@ -109,6 +111,37 @@ def _extract_hit_params(
     )
 
 
+def _simulate_chunk(
+    rng: np.random.Generator,
+    crit_lows: np.ndarray,
+    crit_highs: np.ndarray,
+    normal_lows: np.ndarray,
+    normal_highs: np.ndarray,
+    crit_rates: np.ndarray,
+    evade_rates: np.ndarray,
+    n_samples: int,
+) -> np.ndarray:
+    """チャンク単位でシミュレーションし、合計ダメージを返す。"""
+    n_hits = len(crit_lows)
+
+    hit_mask = rng.random((n_hits, n_samples)) >= evade_rates[:, None]
+    is_crit = rng.random((n_hits, n_samples)) < crit_rates[:, None]
+
+    u = rng.random((n_hits, n_samples))
+    crit_raw = u * (crit_highs - crit_lows)[:, None] + crit_lows[:, None]
+
+    u = rng.random((n_hits, n_samples))
+    norm_raw = u * (normal_highs - normal_lows)[:, None] + normal_lows[:, None]
+
+    raw_samples = np.where(is_crit, crit_raw, norm_raw)
+    del crit_raw, norm_raw, is_crit
+
+    dmg = decay(raw_samples.ravel()).reshape(n_hits, n_samples)
+    del raw_samples
+
+    return np.sum(dmg * hit_mask, axis=0)
+
+
 def _simulate_vectorized(
     rng: np.random.Generator,
     crit_lows: np.ndarray,
@@ -121,29 +154,28 @@ def _simulate_vectorized(
 ) -> np.ndarray:
     """全ヒットをまとめてベクトル演算でシミュレーションし、合計ダメージを返す。
 
-    Python ループを排除し、(n_hits, n_samples) の 2D 配列で一括処理する。
+    メモリ使用量を抑えるため、チャンク分割して処理する。
     """
     n_hits = len(crit_lows)
     if n_hits == 0:
         return np.zeros(n_samples)
 
-    # (n_hits, n_samples) の乱数を一括生成
-    hit_mask = rng.random((n_hits, n_samples)) >= evade_rates[:, None]
-    is_crit = rng.random((n_hits, n_samples)) < crit_rates[:, None]
+    if n_samples <= _CHUNK_SIZE:
+        return _simulate_chunk(
+            rng, crit_lows, crit_highs, normal_lows, normal_highs,
+            crit_rates, evade_rates, n_samples,
+        )
 
-    # ヒットごとに異なる範囲の一様乱数を生成
-    u_crit = rng.random((n_hits, n_samples))
-    u_norm = rng.random((n_hits, n_samples))
-
-    crit_raw = u_crit * (crit_highs - crit_lows)[:, None] + crit_lows[:, None]
-    norm_raw = u_norm * (normal_highs - normal_lows)[:, None] + normal_lows[:, None]
-
-    raw_samples = np.where(is_crit, crit_raw, norm_raw)
-
-    # 減衰関数を一括適用 (1D に展開して処理し、元の形に戻す)
-    dmg = decay(raw_samples.ravel()).reshape(n_hits, n_samples)
-
-    return np.sum(dmg * hit_mask, axis=0)
+    parts = []
+    remaining = n_samples
+    while remaining > 0:
+        chunk = min(remaining, _CHUNK_SIZE)
+        parts.append(_simulate_chunk(
+            rng, crit_lows, crit_highs, normal_lows, normal_highs,
+            crit_rates, evade_rates, chunk,
+        ))
+        remaining -= chunk
+    return np.concatenate(parts)
 
 
 def run_simulation(
