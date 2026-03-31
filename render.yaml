@@ -7,7 +7,3 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
-      - key: N_SAMPLES
-        value: "100000"
-      - key: N_CUTOFF_SAMPLES
-        value: "100000"
