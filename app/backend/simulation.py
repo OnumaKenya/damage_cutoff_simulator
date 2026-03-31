@@ -49,25 +49,101 @@ def inverse_decay(y: float) -> float:
     return y
 
 
-def generate_damage(
-    rng: np.random.Generator,
-    low: float,
-    high: float,
-    n: int,
+def _extract_hit_params(
+    indices: list[int],
+    params: dict[int, dict],
+    global_crit: float,
+    global_evade: float,
     damage_mode: str,
-) -> np.ndarray:
-    """モードに応じたダメージサンプルを生成し、減衰後の値を返す。"""
-    if damage_mode == "post_decay":
-        # 入力は減衰後 → 逆変換して生ダメージ範囲を求める
-        raw_low = inverse_decay(low)
-        raw_high = inverse_decay(high)
-    else:
-        # 入力は生ダメージそのまま
-        raw_low = low
-        raw_high = high
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """カードリストからヒットごとのパラメータを展開し、6本の配列として返す。"""
+    crit_lows: list[float] = []
+    crit_highs: list[float] = []
+    normal_lows: list[float] = []
+    normal_highs: list[float] = []
+    crit_rates: list[float] = []
+    evade_rates: list[float] = []
 
-    raw_samples = rng.uniform(raw_low, max(raw_high, raw_low), n)
-    return decay(raw_samples)
+    for idx in indices:
+        p = params.get(idx)
+        if p is None:
+            continue
+
+        crit_min = float(p.get("crit_min") or 0)
+        crit_max = float(p.get("crit_max") or 0)
+        normal_min = float(p.get("normal_min") or 0)
+        normal_max = float(p.get("normal_max") or 0)
+        hits = int(p.get("hits") or 1)
+        cr = p.get("crit_rate")
+        er = p.get("evade_rate")
+        cr = float(cr if cr is not None else global_crit or 0) / 100.0
+        er = float(er if er is not None else global_evade or 0) / 100.0
+
+        if damage_mode == "post_decay":
+            raw_crit_lo = inverse_decay(crit_min)
+            raw_crit_hi = inverse_decay(crit_max)
+            raw_norm_lo = inverse_decay(normal_min)
+            raw_norm_hi = inverse_decay(normal_max)
+        else:
+            raw_crit_lo, raw_crit_hi = crit_min, crit_max
+            raw_norm_lo, raw_norm_hi = normal_min, normal_max
+
+        raw_crit_hi = max(raw_crit_hi, raw_crit_lo)
+        raw_norm_hi = max(raw_norm_hi, raw_norm_lo)
+
+        for _ in range(hits):
+            crit_lows.append(raw_crit_lo)
+            crit_highs.append(raw_crit_hi)
+            normal_lows.append(raw_norm_lo)
+            normal_highs.append(raw_norm_hi)
+            crit_rates.append(cr)
+            evade_rates.append(er)
+
+    return (
+        np.asarray(crit_lows),
+        np.asarray(crit_highs),
+        np.asarray(normal_lows),
+        np.asarray(normal_highs),
+        np.asarray(crit_rates),
+        np.asarray(evade_rates),
+    )
+
+
+def _simulate_vectorized(
+    rng: np.random.Generator,
+    crit_lows: np.ndarray,
+    crit_highs: np.ndarray,
+    normal_lows: np.ndarray,
+    normal_highs: np.ndarray,
+    crit_rates: np.ndarray,
+    evade_rates: np.ndarray,
+    n_samples: int,
+) -> np.ndarray:
+    """全ヒットをまとめてベクトル演算でシミュレーションし、合計ダメージを返す。
+
+    Python ループを排除し、(n_hits, n_samples) の 2D 配列で一括処理する。
+    """
+    n_hits = len(crit_lows)
+    if n_hits == 0:
+        return np.zeros(n_samples)
+
+    # (n_hits, n_samples) の乱数を一括生成
+    hit_mask = rng.random((n_hits, n_samples)) >= evade_rates[:, None]
+    is_crit = rng.random((n_hits, n_samples)) < crit_rates[:, None]
+
+    # ヒットごとに異なる範囲の一様乱数を生成
+    u_crit = rng.random((n_hits, n_samples))
+    u_norm = rng.random((n_hits, n_samples))
+
+    crit_raw = u_crit * (crit_highs - crit_lows)[:, None] + crit_lows[:, None]
+    norm_raw = u_norm * (normal_highs - normal_lows)[:, None] + normal_lows[:, None]
+
+    raw_samples = np.where(is_crit, crit_raw, norm_raw)
+
+    # 減衰関数を一括適用 (1D に展開して処理し、元の形に戻す)
+    dmg = decay(raw_samples.ravel()).reshape(n_hits, n_samples)
+
+    return np.sum(dmg * hit_mask, axis=0)
 
 
 def run_simulation(
@@ -80,32 +156,9 @@ def run_simulation(
 ) -> tuple[go.Figure, str]:
     """モンテカルロ法でダメージ分布をシミュレーションし、Figureと通過率テキストを返す。"""
     rng = np.random.default_rng()
-    total_damage = np.zeros(N_SAMPLES)
 
-    for idx in indices:
-        p = params.get(idx)
-        if p is None:
-            continue
-
-        crit_min = float(p.get("crit_min") or 0)
-        crit_max = float(p.get("crit_max") or 0)
-        normal_min = float(p.get("normal_min") or 0)
-        normal_max = float(p.get("normal_max") or 0)
-        hits = int(p.get("hits") or 1)
-        crit_rate = p.get("crit_rate")
-        evade_rate = p.get("evade_rate")
-        crit_rate = float(crit_rate if crit_rate is not None else global_crit or 0) / 100.0
-        evade_rate = float(evade_rate if evade_rate is not None else global_evade or 0) / 100.0
-
-        for _ in range(hits):
-            hit_mask = rng.random(N_SAMPLES) >= evade_rate
-            is_crit = rng.random(N_SAMPLES) < crit_rate
-            dmg = np.where(
-                is_crit,
-                generate_damage(rng, crit_min, crit_max, N_SAMPLES, damage_mode),
-                generate_damage(rng, normal_min, normal_max, N_SAMPLES, damage_mode),
-            )
-            total_damage += dmg * hit_mask
+    hit_params = _extract_hit_params(indices, params, global_crit, global_evade, damage_mode)
+    total_damage = _simulate_vectorized(rng, *hit_params, N_SAMPLES)
 
     fig = go.Figure()
     fig.add_trace(go.Histogram(x=total_damage, nbinsx=200, name="ダメージ分布"))
@@ -139,31 +192,9 @@ def _simulate_cards(
 ) -> np.ndarray:
     """指定カード群の合計ダメージをシミュレーションし、ソート済み配列を返す。"""
     rng = np.random.default_rng()
-    total = np.zeros(n_samples)
 
-    for idx in indices:
-        p = params.get(idx)
-        if p is None:
-            continue
-        crit_min = float(p.get("crit_min") or 0)
-        crit_max = float(p.get("crit_max") or 0)
-        normal_min = float(p.get("normal_min") or 0)
-        normal_max = float(p.get("normal_max") or 0)
-        hits = int(p.get("hits") or 1)
-        crit_rate = p.get("crit_rate")
-        evade_rate = p.get("evade_rate")
-        crit_rate = float(crit_rate if crit_rate is not None else global_crit or 0) / 100.0
-        evade_rate = float(evade_rate if evade_rate is not None else global_evade or 0) / 100.0
-
-        for _ in range(hits):
-            hit_mask = rng.random(n_samples) >= evade_rate
-            is_crit = rng.random(n_samples) < crit_rate
-            dmg = np.where(
-                is_crit,
-                generate_damage(rng, crit_min, crit_max, n_samples, damage_mode),
-                generate_damage(rng, normal_min, normal_max, n_samples, damage_mode),
-            )
-            total += dmg * hit_mask
+    hit_params = _extract_hit_params(indices, params, global_crit, global_evade, damage_mode)
+    total = _simulate_vectorized(rng, *hit_params, n_samples)
 
     total.sort()
     return total
