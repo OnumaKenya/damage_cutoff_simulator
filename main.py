@@ -20,20 +20,6 @@ application.clientside_callback(
     prevent_initial_call=True,
 )
 
-# --- 世代カウンタ ---
-application.clientside_callback(
-    "dash_clientside.sim.incrementGeneration",
-    Output("cutoff-generation", "data"),
-    Input("card-indices", "data"),
-    Input("sorted-indices", "data"),
-    Input({"type": "param", "param": ALL, "index": ALL}, "value"),
-    Input("global-crit-rate", "value"),
-    Input("global-evade-rate", "value"),
-    Input("damage-mode", "value"),
-    State("cutoff-generation", "data"),
-    prevent_initial_call=True,
-)
-
 # --- 一括適用 ---
 application.clientside_callback(
     "dash_clientside.sim.applyGlobal",
@@ -58,85 +44,16 @@ application.clientside_callback(
     State("card-indices", "data"),
     State("global-crit-rate", "value"),
     State("global-evade-rate", "value"),
+    State("global-stability", "value"),
     State("target-damage", "value"),
     State("damage-mode", "value"),
+    State("calc-method", "value"),
+    State("hp-mode", "value"),
+    State("hp-H", "value"),
+    State("hp-H1", "value"),
+    State("hp-R0", "value"),
+    State("hp-R1", "value"),
     prevent_initial_call=True,
-)
-
-# --- 足切り計算 ---
-application.clientside_callback(
-    "dash_clientside.sim.computeCutoff",
-    Output("cutoff-dist-store", "data"),
-    Output("cutoff-values-store", "data"),
-    Output({"type": "cutoff-status", "index": ALL}, "children"),
-    Input({"type": "cutoff-compute", "index": ALL}, "n_clicks"),
-    State("sorted-indices", "data"),
-    State("card-indices", "data"),
-    State({"type": "param", "param": ALL, "index": ALL}, "value"),
-    State({"type": "param", "param": ALL, "index": ALL}, "id"),
-    State("global-crit-rate", "value"),
-    State("global-evade-rate", "value"),
-    State("target-damage", "value"),
-    State("damage-mode", "value"),
-    State("cutoff-dist-store", "data"),
-    State("cutoff-values-store", "data"),
-    State("cutoff-generation", "data"),
-    State({"type": "cutoff-status", "index": ALL}, "id"),
-    prevent_initial_call=True,
-)
-
-# --- 足切りスライダー操作 ---
-application.clientside_callback(
-    "dash_clientside.sim.onSliderChange",
-    Output("cutoff-values-store", "data", allow_duplicate=True),
-    Input({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "value"),
-    State("cutoff-values-store", "data"),
-    State("cutoff-dist-store", "data"),
-    State("target-damage", "value"),
-    State({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "id"),
-    prevent_initial_call=True,
-)
-
-# --- 足切りスライダー表示更新 ---
-application.clientside_callback(
-    "dash_clientside.sim.updateCutoffDisplay",
-    Output({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "value"),
-    Output({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "min"),
-    Output({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "max"),
-    Input("cutoff-values-store", "data"),
-    State("cutoff-dist-store", "data"),
-    State({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "id"),
-    prevent_initial_call=True,
-)
-
-# --- % Input 直接入力 ---
-application.clientside_callback(
-    "dash_clientside.sim.onPctInputChange",
-    Output("cutoff-values-store", "data", allow_duplicate=True),
-    Input({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "value"),
-    State("cutoff-values-store", "data"),
-    State("cutoff-dist-store", "data"),
-    State("target-damage", "value"),
-    State({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "id"),
-    prevent_initial_call=True,
-)
-
-# --- Store → % Input 表示同期 ---
-application.clientside_callback(
-    "dash_clientside.sim.updatePctInputDisplay",
-    Output({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "value", allow_duplicate=True),
-    Input("cutoff-values-store", "data"),
-    State({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "id"),
-    prevent_initial_call=True,
-)
-
-# --- スライダー → % Input リアルタイム同期 (サーバー往復なし) ---
-application.clientside_callback(
-    "dash_clientside.sim.sliderToPctSync",
-    Output({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "value"),
-    Input({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "value"),
-    State({"type": "cutoff-slider", "elem": ALL, "index": ALL}, "id"),
-    State({"type": "cutoff-pct-input", "elem": ALL, "index": ALL}, "id"),
 )
 
 # --- マニュアルモーダル開閉 ---
@@ -145,6 +62,80 @@ application.clientside_callback(
     Output("manual-modal", "style"),
     Input("open-manual-btn", "n_clicks"),
     Input("close-manual-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# --- HP依存パラメータ入力欄の表示切替 ---
+application.clientside_callback(
+    "dash_clientside.sim.toggleHpParams",
+    Output("hp-params", "style"),
+    Input("hp-mode", "value"),
+)
+
+# --- 画面スニップ (getDisplayMedia → 範囲選択 → ocr-image-store) ---
+application.clientside_callback(
+    "dash_clientside.sim.snipScreen",
+    Output("ocr-image-store", "data"),
+    Input("ocr-snip-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# --- ページ切替 (シミュレータ / 多段リスタ解析) ---
+application.clientside_callback(
+    """
+    function(nsim, nrest) {
+        var ctx = window.dash_clientside.callback_context;
+        var trig = (ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id : '';
+        var showRestart = trig.indexOf('nav-restart') === 0;
+        return [
+            {display: showRestart ? 'none' : 'block'},
+            {display: showRestart ? 'block' : 'none'},
+            showRestart ? 'nav-btn' : 'nav-btn active',
+            showRestart ? 'nav-btn active' : 'nav-btn'
+        ];
+    }
+    """,
+    Output("page-sim", "style"),
+    Output("page-restart", "style"),
+    Output("nav-sim", "className"),
+    Output("nav-restart", "className"),
+    Input("nav-sim", "n_clicks"),
+    Input("nav-restart", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# --- 目標ダメージの双方向同期 (シミュレータ <-> 多段リスタ) ---
+application.clientside_callback(
+    """
+    function(simVal, restartVal) {
+        var ctx = window.dash_clientside.callback_context;
+        var nu = window.dash_clientside.no_update;
+        var trig = (ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id : '';
+        if (trig.indexOf('target-damage') === 0) {
+            return (restartVal === simVal) ? [nu, nu] : [nu, simVal];
+        }
+        if (trig.indexOf('restart-D') === 0) {
+            return (simVal === restartVal) ? [nu, nu] : [restartVal, nu];
+        }
+        return [nu, nu];
+    }
+    """,
+    Output("target-damage", "value", allow_duplicate=True),
+    Output("restart-D", "value", allow_duplicate=True),
+    Input("target-damage", "value"),
+    Input("restart-D", "value"),
+    prevent_initial_call=True,
+)
+
+# --- サイドバー開閉 (スライド) ---
+application.clientside_callback(
+    """
+    function(n) {
+        return ((n || 0) % 2 === 1) ? 'sim-sidebar collapsed' : 'sim-sidebar';
+    }
+    """,
+    Output("sim-sidebar", "className"),
+    Input("sidebar-toggle", "n_clicks"),
     prevent_initial_call=True,
 )
 

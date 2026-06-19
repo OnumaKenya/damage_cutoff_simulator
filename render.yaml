@@ -7,3 +7,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      # スクショ OCR 用 Google Vision API キー (ダッシュボードで設定)
+      - key: GOOGLE_VISION_API_KEY
+        sync: false

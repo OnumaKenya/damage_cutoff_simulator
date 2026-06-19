@@ -51,6 +51,37 @@ def inverse_decay(y: float) -> float:
     return y
 
 
+# 減衰後ダメージの上限キャップ (DAMAGE_FUNC 末尾の定数項)。これ以上の減衰後値は
+# 生ダメージへ一意に逆変換できない (情報が潰れる) ため、安定値から最大を逆算する。
+DAMAGE_CAP = DAMAGE_FUNC[-1][1][1]
+
+
+def stability_min_ratio(stability: float) -> float:
+    """安定値 x に対する「減衰前最小 / 減衰前最大」比率。
+    減衰前最小 = 減衰前最大 × (1 − 1/(1+0.001x) + 0.2)。"""
+    return 1.0 - 1.0 / (1.0 + 0.001 * stability) + 0.2
+
+
+def raw_damage_bounds(
+    post_min: float, post_max: float, stability, damage_mode: str,
+) -> tuple[float, float]:
+    """ダメージ型 (会心/非会心) 1 つの (減衰前下限, 減衰前上限) を返す。
+
+    減衰考慮前モードでは入力値をそのまま使う。減衰考慮済みモードでは逆変換するが、
+    最大が減衰上限 (DAMAGE_CAP) に達していて安定値が与えられている場合は、最大を
+    逆変換すると情報が潰れる (キャップに張り付く) ため、減衰前最小から
+    減衰前最大 = 減衰前最小 / stability_min_ratio(x) で逆算する。"""
+    if damage_mode != "post_decay":
+        return post_min, max(post_max, post_min)
+    raw_lo = inverse_decay(post_min)
+    if stability is not None and post_max >= DAMAGE_CAP:
+        ratio = stability_min_ratio(float(stability))
+        raw_hi = raw_lo / ratio if ratio > 0 else raw_lo
+    else:
+        raw_hi = inverse_decay(post_max)
+    return raw_lo, max(raw_hi, raw_lo)
+
+
 def _extract_hit_params(
     indices: list[int],
     params: dict[int, dict],
@@ -80,18 +111,11 @@ def _extract_hit_params(
         er = p.get("evade_rate")
         cr = float(cr if cr is not None else global_crit or 0) / 100.0
         er = float(er if er is not None else global_evade or 0) / 100.0
+        stab = p.get("stability")
+        stab = None if (stab is None or stab == "") else float(stab)
 
-        if damage_mode == "post_decay":
-            raw_crit_lo = inverse_decay(crit_min)
-            raw_crit_hi = inverse_decay(crit_max)
-            raw_norm_lo = inverse_decay(normal_min)
-            raw_norm_hi = inverse_decay(normal_max)
-        else:
-            raw_crit_lo, raw_crit_hi = crit_min, crit_max
-            raw_norm_lo, raw_norm_hi = normal_min, normal_max
-
-        raw_crit_hi = max(raw_crit_hi, raw_crit_lo)
-        raw_norm_hi = max(raw_norm_hi, raw_norm_lo)
+        raw_crit_lo, raw_crit_hi = raw_damage_bounds(crit_min, crit_max, stab, damage_mode)
+        raw_norm_lo, raw_norm_hi = raw_damage_bounds(normal_min, normal_max, stab, damage_mode)
 
         for _ in range(hits):
             crit_lows.append(raw_crit_lo)

@@ -21,3 +21,6 @@ Thumbs.db
 build/
 dist/
 *.spec
+
+# OCR テスト用スクショ
+shots/

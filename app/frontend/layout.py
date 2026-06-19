@@ -1,4 +1,3 @@
-import math
 import sys
 from pathlib import Path
 
@@ -17,25 +16,6 @@ DEFAULT_EVADE_RATE = 0
 
 LABEL_STYLE = {"fontSize": "0.85rem", "whiteSpace": "nowrap"}
 
-# ---------------------------------------------------------------------------
-# 対数スライダー変換 (内部値 0–400 ↔ 0.01%–100%)
-# ---------------------------------------------------------------------------
-LOG_SLIDER_MIN = 0
-LOG_SLIDER_MAX = 400
-
-
-def log_slider_to_pct(val: float) -> float:
-    """内部スライダー値 (0–400) → パーセント (0.01–100)"""
-    return 10 ** ((val / 100) - 2)
-
-
-def pct_to_log_slider(pct: float) -> float:
-    """パーセント (0.01–100) → 内部スライダー値 (0–400)"""
-    if pct <= 0:
-        return LOG_SLIDER_MIN
-    val = (math.log10(pct) + 2) * 100
-    return max(LOG_SLIDER_MIN, min(LOG_SLIDER_MAX, val))
-
 
 _DEFAULT_PARAMS = {
     "crit_min": 100000,
@@ -45,6 +25,7 @@ _DEFAULT_PARAMS = {
     "hits": 10,
     "crit_rate": None,
     "evade_rate": None,
+    "enemies": 1,
 }
 
 
@@ -140,8 +121,14 @@ def make_damage_card(
                     field("Hit数", "hits", p["hits"]),
                     field("会心率 (%)", "crit_rate", p["crit_rate"]),
                     field("回避率 (%)", "evade_rate", p["evade_rate"]),
+                    field("敵の数", "enemies", p["enemies"]),
                 ],
                 style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "6px"},
+            ),
+            html.Div(
+                "敵の数: Hit数に掛けて総ヒット数を算出します(全体攻撃などで複数体に当たる場合に2以上)。"
+                "安定値はサイドバーの全体設定に移動しました。",
+                style={"fontSize": "0.72rem", "color": "#999", "marginTop": "4px"},
             ),
         ],
         id={"type": "card", "index": index},
@@ -155,121 +142,165 @@ def make_damage_card(
     )
 
 
-def _cutoff_element_row(label: str, elem: str, index: int, is_percent: bool = False) -> html.Div:
-    """足切りカードの1要素行（スライダー＋数値表示）を生成する。"""
-    if is_percent:
-        slider = dcc.Slider(
-            id={"type": "cutoff-slider", "elem": elem, "index": index},
-            min=LOG_SLIDER_MIN,
-            max=LOG_SLIDER_MAX,
-            step=1,
-            value=0,
-            marks={0: "0.01%", 100: "0.1%", 200: "1%", 300: "10%", 400: "100%"},
-        )
-        suffix = html.Div(
-            [
-                dcc.Input(
-                    id={"type": "cutoff-pct-input", "elem": elem, "index": index},
-                    type="number",
-                    value=0.01,
-                    min=0.01,
-                    max=100,
-                    step=0.01,
-                    debounce=True,
-                    style={"width": "80px", "fontSize": "0.85rem", "textAlign": "right"},
-                ),
-                html.Span("%", style={"marginLeft": "2px"}),
-            ],
-            style={"display": "flex", "alignItems": "center", "minWidth": "100px"},
-        )
-    else:
-        slider = dcc.Slider(
-            id={"type": "cutoff-slider", "elem": elem, "index": index},
-            min=0,
-            max=10_000_000,
-            step=1000,
-            value=0,
-            marks=None,
-            tooltip={"placement": "bottom", "always_visible": True},
-        )
-        suffix = html.Span("", style={"marginLeft": "4px", "minWidth": "16px"})
-
+def _top_settings_panel() -> html.Div:
+    """カード生成の上に配置する「目標ダメージ」「一括設定」パネル。"""
+    box_style = {
+        "flex": "1",
+        "minWidth": "240px",
+        "padding": "10px",
+        "border": "1px solid #ddd",
+        "borderRadius": "8px",
+    }
     return html.Div(
         [
-            html.Label(label, style={**LABEL_STYLE, "fontWeight": "bold", "minWidth": "200px"}),
-            html.Div(slider, style={"flex": "3"}, className="log-slider-wrap" if is_percent else ""),
-            suffix,
+            # 目標ダメージ
+            html.Div(
+                [
+                    html.Strong("目標ダメージ"),
+                    dcc.Input(id="target-damage", type="number", value=1000000, style={"width": "100%", "marginTop": "6px"}),
+                ],
+                style={**box_style, "background": "#fff5f5"},
+            ),
+            # 一括設定
+            html.Div(
+                [
+                    html.Strong("一括設定"),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("会心率(%)", style=LABEL_STYLE),
+                                    dcc.Input(id="global-crit-rate", type="number", value=DEFAULT_CRIT_RATE, style={"width": "100%"}),
+                                ],
+                                style={"flex": "1", "minWidth": "100px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("回避率(%)", style=LABEL_STYLE),
+                                    dcc.Input(id="global-evade-rate", type="number", value=DEFAULT_EVADE_RATE, style={"width": "100%"}),
+                                ],
+                                style={"flex": "1", "minWidth": "100px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "marginTop": "6px"},
+                    ),
+                    html.Button("一括適用", id="apply-global-btn", n_clicks=0, style={"marginTop": "8px", "width": "100%"}),
+                ],
+                style={**box_style, "background": "#f5f5ff"},
+            ),
         ],
-        style={"display": "flex", "alignItems": "center", "gap": "8px",
-               "marginBottom": "40px" if not is_percent else "8px"},
+        style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "16px"},
     )
 
 
-def make_cutoff_card(index: int) -> html.Div:
-    """足切りカードを生成する。index はパターンマッチング用。"""
+def _ocr_panel() -> html.Div:
+    """スクリーンショット → カード自動生成パネル。"""
     return html.Div(
         [
+            html.Strong("📷 スクショからカード生成", style={"fontSize": "0.95rem"}),
             html.Div(
                 [
-                    html.Span("⠿", className="drag-handle"),
-                    html.Strong(f"✂ 足切りライン {index + 1}", style={"color": "#d63031"}),
-                    dcc.Input(
-                        id={"type": "cutoff-memo", "index": index},
-                        type="text",
-                        placeholder="備考",
-                        style={"marginLeft": "8px", "flex": "1", "fontSize": "0.85rem"},
+                    dcc.Upload(
+                        id="ocr-upload",
+                        children=html.Div(
+                            "ここに画像をドロップ / クリックして選択",
+                            style={"fontSize": "0.85rem", "color": "#555"},
+                        ),
+                        accept="image/*",
+                        multiple=False,
+                        style={
+                            "width": "100%",
+                            "boxSizing": "border-box",
+                            "border": "2px dashed #4a90d9",
+                            "borderRadius": "6px",
+                            "padding": "10px",
+                            "textAlign": "center",
+                            "cursor": "pointer",
+                        },
                     ),
                     html.Button(
-                        "足切り計算",
-                        id={"type": "cutoff-compute", "index": index},
+                        "🖥 画面スニップ",
+                        id="ocr-snip-btn",
                         n_clicks=0,
+                        title="画面の一部をドラッグで範囲選択して取り込む",
                         style={
-                            "marginLeft": "auto",
-                            "background": "#d63031",
+                            "background": "#4a90d9",
                             "color": "white",
                             "border": "none",
-                            "borderRadius": "4px",
-                            "padding": "4px 12px",
+                            "borderRadius": "6px",
+                            "padding": "8px 16px",
                             "cursor": "pointer",
-                        },
-                    ),
-                    html.Button(
-                        "✕",
-                        id={"type": "cutoff-remove", "index": index},
-                        n_clicks=0,
-                        style={
-                            "marginLeft": "8px",
-                            "background": "none",
-                            "border": "none",
-                            "cursor": "pointer",
-                            "fontSize": "1.1rem",
+                            "whiteSpace": "nowrap",
                         },
                     ),
                 ],
-                style={"display": "flex", "alignItems": "center", "marginBottom": "12px"},
+                style={"display": "flex", "flexDirection": "column", "gap": "10px",
+                       "alignItems": "stretch", "marginTop": "8px"},
             ),
             dcc.Loading(
-                [
-                    _cutoff_element_row("足切り値", "e1", index),
-                    _cutoff_element_row("足切り通過確率", "e2", index, is_percent=True),
-                    _cutoff_element_row("残り必要ダメージ", "e3", index),
-                    _cutoff_element_row("残り通過確率", "e4", index, is_percent=True),
-                    html.Div(
-                        id={"type": "cutoff-status", "index": index},
-                        style={"fontSize": "0.85rem", "color": "#666", "marginTop": "4px"},
-                    ),
-                ],
-                type="circle",
-                color="#d63031",
+                html.Div(
+                    id="ocr-status",
+                    style={"fontSize": "0.82rem", "color": "#666", "marginTop": "6px", "minHeight": "1.2em"},
+                ),
+                type="dot",
+                color="#4a90d9",
             ),
         ],
-        id={"type": "cutoff", "index": index},
         style={
-            "border": "2px solid #d63031",
+            "border": "1px solid #4a90d9",
             "borderRadius": "8px",
             "padding": "12px",
-            "marginBottom": "10px",
-            "background": "#fff0f0",
+            "marginBottom": "16px",
+            "background": "#f3f8ff",
+        },
+    )
+
+
+def _io_panel() -> html.Div:
+    """入力情報のエクスポート / インポートパネル(カード + 全体設定 + 多段リスタ設定)。"""
+    return html.Div(
+        [
+            html.Strong("💾 入力の保存 / 読込", style={"fontSize": "0.95rem"}),
+            html.Div(
+                [
+                    html.Button(
+                        "⬇ エクスポート (JSON)",
+                        id="export-btn",
+                        n_clicks=0,
+                        title="現在の全カード・全体設定・足切りライン最適化の設定を JSON で保存",
+                        style={
+                            "background": "#2d8659", "color": "white", "border": "none",
+                            "borderRadius": "6px", "padding": "8px 16px", "cursor": "pointer",
+                            "whiteSpace": "nowrap",
+                        },
+                    ),
+                    dcc.Upload(
+                        id="import-upload",
+                        children=html.Div(
+                            "⬆ インポート: JSON をドロップ / クリックして選択",
+                            style={"fontSize": "0.85rem", "color": "#555"},
+                        ),
+                        accept=".json,application/json",
+                        multiple=False,
+                        style={
+                            "width": "100%", "boxSizing": "border-box", "border": "2px dashed #2d8659",
+                            "borderRadius": "6px", "padding": "10px", "textAlign": "center",
+                            "cursor": "pointer",
+                        },
+                    ),
+                ],
+                style={"display": "flex", "flexDirection": "column", "gap": "10px",
+                       "alignItems": "stretch", "marginTop": "8px"},
+            ),
+            html.Div(
+                id="io-status",
+                style={"fontSize": "0.82rem", "color": "#666", "marginTop": "6px", "minHeight": "1.2em"},
+            ),
+            dcc.Download(id="export-download"),
+        ],
+        style={
+            "border": "1px solid #2d8659", "borderRadius": "8px", "padding": "12px",
+            "marginBottom": "16px", "background": "#f1faf4",
         },
     )
 
@@ -282,57 +313,114 @@ def _sidebar() -> html.Div:
         "border": "1px solid #ddd",
         "borderRadius": "8px",
     }
-    return html.Div(
+    def hp_field(label, hid, value):
+        return html.Div(
+            [
+                html.Label(label, style=LABEL_STYLE),
+                dcc.Input(id=hid, type="number", value=value, style={"width": "100%"}),
+            ],
+            style={"marginTop": "6px"},
+        )
+
+    # --- 積or和モデル (HP依存ダメージ) ---
+    hp_section = html.Div(
         [
-            # ダメージ生成モード
-            html.Div(
-                [
-                    html.Strong("ダメージ生成モード"),
-                    dcc.RadioItems(
-                        id="damage-mode",
-                        options=[
-                            {"label": "減衰考慮済み（推奨）", "value": "post_decay"},
-                            {"label": "減衰考慮前", "value": "pre_decay"},
-                        ],
-                        value="post_decay",
-                        style={"display": "flex", "flexDirection": "column", "gap": "4px", "marginTop": "6px"},
-                    ),
+            html.Strong("HP依存ダメージ"),
+            dcc.RadioItems(
+                id="hp-mode",
+                options=[
+                    {"label": "なし（合計＝和モデル）", "value": "off"},
+                    {"label": "あり（ミカ型＝積モデル）", "value": "on"},
                 ],
-                style={**section_style, "background": "#f0f8f0"},
+                value="off",
+                style={"display": "flex", "flexDirection": "column", "gap": "4px", "marginTop": "6px"},
             ),
-            # 目標ダメージ
             html.Div(
                 [
-                    html.Strong("目標ダメージ"),
-                    dcc.Input(id="target-damage", type="number", value=1000000, style={"width": "100%", "marginTop": "6px"}),
-                ],
-                style={**section_style, "background": "#fff5f5"},
-            ),
-            # 一括設定
-            html.Div(
-                [
-                    html.Strong("一括設定"),
+                    hp_field("敵の最大HP", "hp-H", 1000000),
+                    hp_field("開始時HP", "hp-H1", 1000000),
+                    hp_field("HP満タン時の倍率 (R1)", "hp-R1", 2),
+                    hp_field("HP0時の倍率 (R0)", "hp-R0", 1),
                     html.Div(
-                        [
-                            html.Label("会心率(%)", style=LABEL_STYLE),
-                            dcc.Input(id="global-crit-rate", type="number", value=DEFAULT_CRIT_RATE, style={"width": "100%"}),
-                        ],
-                        style={"marginTop": "6px"},
+                        "※ 倍率は現在HPに線形依存。足切り計算は和モデル固定。",
+                        style={"fontSize": "0.75rem", "color": "#888", "marginTop": "6px"},
                     ),
-                    html.Div(
-                        [
-                            html.Label("回避率(%)", style=LABEL_STYLE),
-                            dcc.Input(id="global-evade-rate", type="number", value=DEFAULT_EVADE_RATE, style={"width": "100%"}),
-                        ],
-                        style={"marginTop": "6px"},
-                    ),
-                    html.Button("一括適用", id="apply-global-btn", n_clicks=0, style={"marginTop": "8px", "width": "100%"}),
                 ],
-                style={**section_style, "background": "#f5f5ff"},
+                id="hp-params",
+                style={"display": "none", "marginTop": "4px"},
             ),
         ],
+        style={**section_style, "background": "#fff7ec"},
+    )
+
+    # --- その他: 計算方式 ---
+    calc_section = html.Div(
+        [
+            html.Strong("計算方式"),
+            dcc.RadioItems(
+                id="calc-method",
+                options=[
+                    {"label": "COS法（準厳密・推奨）", "value": "cos"},
+                    {"label": "モンテカルロ", "value": "mc"},
+                ],
+                value="cos",
+                style={"display": "flex", "flexDirection": "column", "gap": "4px", "marginTop": "6px"},
+            ),
+        ],
+        style={**section_style, "background": "#eef6ff"},
+    )
+
+    # --- その他: ダメージ生成モード ---
+    damage_section = html.Div(
+        [
+            html.Strong("ダメージ生成モード"),
+            dcc.RadioItems(
+                id="damage-mode",
+                options=[
+                    {"label": "減衰考慮済み（推奨）", "value": "post_decay"},
+                    {"label": "減衰考慮前", "value": "pre_decay"},
+                ],
+                value="post_decay",
+                style={"display": "flex", "flexDirection": "column", "gap": "4px", "marginTop": "6px"},
+            ),
+        ],
+        style={**section_style, "background": "#f0f8f0"},
+    )
+
+    # --- その他: 安定値 (全体設定) ---
+    stability_section = html.Div(
+        [
+            html.Strong("安定値"),
+            dcc.Input(
+                id="global-stability",
+                type="number",
+                value=None,
+                placeholder="未入力で無効",
+                style={"width": "100%", "marginTop": "6px"},
+            ),
+            html.Div(
+                "最大ダメージが上限(10,966,999)に張り付く場合のみ使用。最小ダメージと"
+                "安定値から最大ダメージを逆算します(未入力なら通常計算)。",
+                style={"fontSize": "0.72rem", "color": "#888", "marginTop": "6px"},
+            ),
+        ],
+        style={**section_style, "background": "#f3f0ff"},
+    )
+
+    return html.Div(
+        [
+            # 積or和モデル → スクショ → インポートエクスポート → その他
+            hp_section,
+            _ocr_panel(),
+            _io_panel(),
+            calc_section,
+            damage_section,
+            stability_section,
+        ],
+        id="sim-sidebar",
+        className="sim-sidebar",
         style={
-            "width": "220px",
+            "width": "260px",
             "flexShrink": "0",
             "position": "sticky",
             "top": "20px",
@@ -341,12 +429,146 @@ def _sidebar() -> html.Div:
     )
 
 
+def _restart_page() -> html.Div:
+    """多段リスタ(複数足切り関門)スループット最適化ページ。スライダーは使わず、
+    カードごとにチェックポイント指定・時間割合を設定して最適足切りをサーバ計算する。"""
+    return html.Div(
+        [
+            html.H3("足切りライン最適化", style={"marginTop": "0"}),
+            html.P(
+                "「シミュレータ」で設定した攻撃列を使い、複数チェックポイントで"
+                "リセットする運用の最適足切りラインを計算します。各関門は "
+                "「コスト/成功 = 期待時間/成功確率」を最小化する Bermudan 後ろ向き帰納で"
+                "決定(HP依存=積モデルにも対応)。",
+                style={"fontSize": "0.88rem", "color": "#555"},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Button("カード読込 / 更新", id="restart-reload-btn",
+                                        n_clicks=0,
+                                        style={"cursor": "pointer", "padding": "6px 12px"}),
+                            html.Span(" カードを変更したら押してください",
+                                      style={"fontSize": "0.8rem", "color": "#888",
+                                             "marginLeft": "8px"}),
+                        ],
+                        style={"marginBottom": "10px"},
+                    ),
+                    html.Div(
+                        "攻撃列(参考)です。足切り(チェックポイント)で区切られた"
+                        "区間ごとに所要時間の割合を入力します。",
+                        style={"fontSize": "0.82rem", "color": "#666", "marginBottom": "8px"},
+                    ),
+                    html.Div(id="restart-cards-table"),
+                    html.Div(
+                        [
+                            html.Label("足切り(チェックポイント)を追加", style=LABEL_STYLE),
+                            html.Div(
+                                [
+                                    dcc.Dropdown(
+                                        id="restart-cp-dropdown",
+                                        options=[],
+                                        placeholder="チェックポイントにするカードを選択",
+                                        style={"flex": "1", "minWidth": "260px"},
+                                    ),
+                                    html.Button("+ 追加", id="restart-cp-add-btn",
+                                                n_clicks=0,
+                                                style={"cursor": "pointer",
+                                                       "padding": "6px 14px",
+                                                       "whiteSpace": "nowrap"}),
+                                ],
+                                style={"display": "flex", "gap": "8px",
+                                       "alignItems": "center", "marginTop": "4px"},
+                            ),
+                            html.Div(
+                                "足切りを追加すると区間カードが分割されます。各区間カードに"
+                                "「時間割合(相対)」を入力してください(コスト = 期待時間 / 成功確率)。"
+                                "区間カードの「✕」でその足切りを解除できます。",
+                                style={"fontSize": "0.8rem", "color": "#888",
+                                       "margin": "8px 0 6px"},
+                            ),
+                            html.Div(id="restart-cp-cards", style={"marginTop": "8px"}),
+                        ],
+                        style={"marginTop": "12px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("目標ダメージ D", style=LABEL_STYLE),
+                            dcc.Input(id="restart-D", type="number", value=1_000_000,
+                                      step=100_000,
+                                      style={"width": "200px", "marginLeft": "8px"}),
+                        ],
+                        style={"marginTop": "12px"},
+                    ),
+                    html.Button("解析実行", id="restart-run-btn", n_clicks=0,
+                                style={"background": "#d63031", "color": "white",
+                                       "border": "none", "borderRadius": "4px",
+                                       "padding": "8px 18px", "cursor": "pointer",
+                                       "fontWeight": "bold", "marginTop": "12px"}),
+                ],
+                style={"background": "#fff0f0", "border": "2px solid #d63031",
+                       "borderRadius": "8px", "padding": "14px", "marginBottom": "16px"},
+            ),
+            dcc.Loading(
+                [
+                    html.Div(id="restart-summary",
+                             style={"fontSize": "0.95rem", "marginBottom": "10px"}),
+                    dcc.Graph(id="restart-graph"),
+                ],
+                type="circle", color="#d63031",
+            ),
+            # --- リスタライン手動調整 (スライダーで確率の変化を確認) ---
+            html.Div(
+                [
+                    html.H4("リスタラインを手で調整して確率の変化を見る",
+                            style={"marginBottom": "4px"}),
+                    html.Div(
+                        "「解析実行」後に表示されます。各足切りの残りダメージを"
+                        "スライダーで動かすと、成功率・スループットが再計算され、"
+                        "最適ライン(灰点線)と重ねて表示されます。",
+                        style={"fontSize": "0.82rem", "color": "#666",
+                               "marginBottom": "10px"},
+                    ),
+                    html.Div(id="restart-gate-sliders"),
+                    dcc.Loading(
+                        [
+                            html.Div(id="restart-interactive-summary",
+                                     style={"fontSize": "0.92rem", "margin": "6px 0"}),
+                            dcc.Graph(id="restart-interactive-graph"),
+                        ],
+                        type="circle", color="#0984e3",
+                    ),
+                ],
+                style={"background": "#f0f7ff", "border": "2px solid #0984e3",
+                       "borderRadius": "8px", "padding": "14px", "marginTop": "16px"},
+            ),
+            dcc.Store(id="restart-config", data=None),
+        ],
+        style={"maxWidth": "900px"},
+    )
+
+
+def _nav_bar() -> html.Div:
+    # 初期表示は「シミュレータ」ページ (= active)
+    return html.Div(
+        [
+            html.Button("📊 シミュレータ", id="nav-sim", n_clicks=0,
+                        className="nav-btn active"),
+            html.Button("🎯 足切りライン最適化", id="nav-restart", n_clicks=0,
+                        className="nav-btn", style={"marginLeft": "6px"}),
+        ],
+        style={"display": "flex", "marginBottom": "14px", "gap": "0",
+               "borderBottom": "2px solid #d63031", "paddingBottom": "0"},
+    )
+
+
 def create_layout() -> html.Div:
     return html.Div(
         [
             html.Div(
                 [
-                    html.H1("ブルアカダメージ足切りシミュレータ(α版)", style={"marginBottom": "0"}),
+                    html.H1("ブルアカダメージ足切り最適化(β版)", style={"marginBottom": "0"}),
                     html.Div(
                         [
                             html.Button(
@@ -425,18 +647,26 @@ def create_layout() -> html.Div:
                 className="manual-modal-overlay",
                 style={"display": "none"},
             ),
+            _nav_bar(),
             html.Div(
+                html.Div(
                 [
+                    html.Button("≡", id="sidebar-toggle", n_clicks=0,
+                                title="設定パネルの表示/非表示",
+                                style={"alignSelf": "flex-start", "flexShrink": "0",
+                                       "border": "1px solid #ccc", "background": "#f4f4f4",
+                                       "borderRadius": "4px", "padding": "6px 10px",
+                                       "cursor": "pointer", "fontSize": "1.1rem"}),
                     # サイドバー
                     _sidebar(),
                     # メインコンテンツ
                     html.Div(
                         [
+                            _top_settings_panel(),
                             html.Div(id="cards-container", children=[make_damage_card(0, DEFAULT_CRIT_RATE, DEFAULT_EVADE_RATE)]),
                             html.Div(
                                 [
                                     html.Button("+ ダメージ追加", id="add-btn", n_clicks=0),
-                                    html.Button("✂ 足切り追加", id="add-cutoff-btn", n_clicks=0, style={"marginLeft": "12px"}),
                                     html.Button(
                                         "シミュレーション実行",
                                         id="run-btn",
@@ -459,18 +689,23 @@ def create_layout() -> html.Div:
                     ),
                 ],
                 style={"display": "flex", "gap": "20px", "alignItems": "flex-start"},
+                ),
+                id="page-sim",
             ),
+            html.Div(_restart_page(), id="page-restart", style={"display": "none"}),
             # 非表示 Store 群
             dcc.Store(id="drag-order", data=""),
             dcc.Store(id="card-indices", data=[0]),
             dcc.Store(id="sorted-indices", data=[]),
             dcc.Store(id="next-index", data=1),
-            dcc.Store(id="cutoff-indices", data=[]),
-            dcc.Store(id="cutoff-next-index", data=0),
-            dcc.Store(id="cutoff-dist-store", data={}),
-            dcc.Store(id="cutoff-values-store", data={}),
-            dcc.Store(id="cutoff-trigger-store", data=None),
-            dcc.Store(id="cutoff-generation", data=0),
+            # スニップした画像 (data URL) を JS から受け取る
+            dcc.Store(id="ocr-image-store", data=None),
+            # 多段リスタ: 選択済みチェックポイント (累積ヒット数のリスト)
+            dcc.Store(id="restart-cp-store", data=[]),
+            # 多段リスタ: 区間ごとの時間割合 (区間開始境界の累積ヒット数 → 相対重み)
+            dcc.Store(id="restart-seg-time-store", data={"0": 1.0}),
+            # 多段リスタ: 総ヒット数 (区間描画用)
+            dcc.Store(id="restart-nhits", data=0),
         ],
         style={"maxWidth": "1200px", "margin": "0 auto", "padding": "20px", "fontFamily": "sans-serif"},
     )

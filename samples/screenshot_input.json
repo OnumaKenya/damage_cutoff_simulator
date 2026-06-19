@@ -1,0 +1,132 @@
+{
+  "version": 2,
+  "globals": {
+    "target_damage": 19400000,
+    "global_crit": 57.96,
+    "global_evade": 0,
+    "global_stability": null,
+    "calc_method": "cos",
+    "damage_mode": "post_decay",
+    "hp_mode": "off",
+    "hp_H": 1000000,
+    "hp_H1": 1000000,
+    "hp_R0": 1,
+    "hp_R1": 2,
+    "restart_D": 19400000
+  },
+  "cards": [
+    {
+      "params": {
+        "crit_min": 15235,
+        "crit_max": 19572,
+        "normal_min": 4659,
+        "normal_max": 5985,
+        "hits": 4,
+        "crit_rate": 52.37,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット1-4 攻撃力33.92%"
+    },
+    {
+      "params": {
+        "crit_min": 786905,
+        "crit_max": 1010907,
+        "normal_min": 142967,
+        "normal_max": 183664,
+        "hits": 8,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット5-12 攻撃力299.33%"
+    },
+    {
+      "params": {
+        "crit_min": 209841,
+        "crit_max": 269575,
+        "normal_min": 38125,
+        "normal_max": 48977,
+        "hits": 16,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット13-28 攻撃力79.82%"
+    },
+    {
+      "params": {
+        "crit_min": 241318,
+        "crit_max": 310011,
+        "normal_min": 43843,
+        "normal_max": 56324,
+        "hits": 2,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット29-30 攻撃力91.79%"
+    },
+    {
+      "params": {
+        "crit_min": 89183,
+        "crit_max": 114569,
+        "normal_min": 16203,
+        "normal_max": 20815,
+        "hits": 4,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット1-4 攻撃力33.92%"
+    },
+    {
+      "params": {
+        "crit_min": 786905,
+        "crit_max": 1010907,
+        "normal_min": 142967,
+        "normal_max": 183664,
+        "hits": 8,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット5-12 攻撃力299.33%"
+    },
+    {
+      "params": {
+        "crit_min": 209841,
+        "crit_max": 269575,
+        "normal_min": 38125,
+        "normal_max": 48977,
+        "hits": 16,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット13-28 攻撃力79.82%"
+    },
+    {
+      "params": {
+        "crit_min": 241318,
+        "crit_max": 310011,
+        "normal_min": 43843,
+        "normal_max": 56324,
+        "hits": 2,
+        "crit_rate": 57.96,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "ヒット29-30 攻撃力91.79%"
+    }
+  ],
+  "restart": {
+    "checkpoints": [
+      30
+    ],
+    "segment_times": {
+      "0": 1,
+      "30": 1
+    }
+  }
+}

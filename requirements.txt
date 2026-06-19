@@ -29,10 +29,14 @@ markupsafe==3.0.3
     #   flask
     #   jinja2
     #   werkzeug
+mpmath==1.4.1
+    # via damage-cutoff-simulator
 narwhals==2.18.1
     # via plotly
 nest-asyncio==1.6.0
     # via dash
+numpy==2.4.3
+    # via damage-cutoff-simulator
 packaging==26.0
     # via
     #   gunicorn
@@ -42,7 +46,9 @@ plotly==6.6.0
     #   damage-cutoff-simulator
     #   dash
 requests==2.33.0
-    # via dash
+    # via
+    #   damage-cutoff-simulator
+    #   dash
 retrying==1.4.2
     # via dash
 setuptools==82.0.1

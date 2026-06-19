@@ -87,3 +87,50 @@ input[type="number"] {
 .manual-modal-content th {
     background: #f5f5f5;
 }
+
+/* --- サイドバー開閉 (スライド) --- */
+.sim-sidebar {
+  transition: width .25s ease, opacity .2s ease, margin .25s ease, padding .25s ease;
+  overflow: hidden;
+}
+.sim-sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  opacity: 0;
+  margin-right: -20px;
+  pointer-events: none;
+}
+
+/* --- ナビバー: 現在ページの強調 --- */
+.nav-btn {
+  border: 1px solid #ccc;
+  background: #f4f4f4;
+  color: #555;
+  padding: 8px 20px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  font-size: 0.95rem;
+  border-bottom: 3px solid transparent;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.nav-btn:hover { background: #eaeaea; }
+.nav-btn.active {
+  background: #fff;
+  color: #d63031;
+  font-weight: bold;
+  border-color: #d63031;
+  border-bottom: 3px solid #d63031;
+  cursor: default;
+}
+
+/* --- 多段リスタ: カード別チェックポイント/時間テーブル --- */
+table.restart-table { border-collapse: collapse; margin-top: 6px; }
+table.restart-table th, table.restart-table td {
+  border: 1px solid #e0b0b0; padding: 4px 8px; font-size: 0.86rem; text-align: center;
+}
+table.restart-table th { background: #ffe0e0; }
+table.restart-cards { border-collapse: collapse; width: 100%; }
+table.restart-cards th, table.restart-cards td {
+  border: 1px solid #e0b0b0; padding: 4px 8px; font-size: 0.86rem;
+}
+table.restart-cards th { background: #ffe0e0; }
