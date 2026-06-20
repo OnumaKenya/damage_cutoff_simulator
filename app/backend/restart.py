@@ -63,25 +63,31 @@ def _expect_shift(U, grid, nodes):
 # ---------------------------------------------------------------------------
 # 後ろ向き帰納 (固定 g) と Dinkelbach
 # ---------------------------------------------------------------------------
-def _backward(g, seg_dists, seg_nodes, times, D, grid):
-    """固定 g での後ろ向き帰納。V0(g) と各段の続行価値 cont_j(s) を返す。"""
+def _backward(g, seg_dists, seg_nodes, times, D, grid, succ):
+    """固定 g での後ろ向き帰納。V0(g) と各段の続行価値 cont_j(s) を返す。
+
+    succ[j] は区間 j のダメージと独立な成功確率。続行すると時間 t_j を消費し、確率
+    succ[j] で次段へ、1-succ[j] でリスタート(価値 0)なので、続行価値の期待値項に
+    succ[j] が掛かる: cont_j(s) = -g t_j + succ[j]·E[V_{j+1}(s+T_j)]。
+    """
     K = len(seg_dists) - 1                       # 関門の数
     # 終端の1つ手前 = 最後のチェックポイント K: 続行で最終セグメントを回す
     last = seg_dists[K]
     cont = {}
-    # cont_K(s) = -g t_K + P(最終増分 >= D - s)
-    contK = -g * times[K] + (1.0 - last.cdf(D - grid))
+    # cont_K(s) = -g t_K + succ_K · P(最終増分 >= D - s)
+    contK = -g * times[K] + succ[K] * (1.0 - last.cdf(D - grid))
     cont[K] = contK
     U = np.maximum(0.0, contK)
     # j = K-1 .. 1
     for j in range(K - 1, 0, -1):
         EU = _expect_shift(U, grid, seg_nodes[j])
-        contj = -g * times[j] + EU
+        contj = -g * times[j] + succ[j] * EU
         cont[j] = contj
         U = np.maximum(0.0, contj)
     # 開始: 累積 0 から増分 seg0 を足すので E[U_1(seg0)] = U_1 を seg0 分布で平均
     o0, w0 = seg_nodes[0]
-    V0 = -g * times[0] + float(np.sum(w0 * np.interp(o0, grid, U, left=U[0], right=U[-1])))
+    EU0 = float(np.sum(w0 * np.interp(o0, grid, U, left=U[0], right=U[-1])))
+    V0 = -g * times[0] + succ[0] * EU0
     return V0, cont
 
 
@@ -93,9 +99,23 @@ def _gate_from_cont(cont_j, grid):
     return float(grid[pos[0]])
 
 
-def optimize(seg_dists, times, D, n_grid=3000, n_nodes=512, iters=80):
+def _norm_succ(succ, n_segs):
+    """区間ごとのダメージ独立成功確率を長さ n_segs の list に正規化 ([0,1] クランプ)。"""
+    if succ is None:
+        return [1.0] * n_segs
+    out = [1.0] * n_segs
+    for i in range(n_segs):
+        try:
+            out[i] = min(1.0, max(0.0, float(succ[i])))
+        except (TypeError, ValueError, IndexError):
+            out[i] = 1.0
+    return out
+
+
+def optimize(seg_dists, times, D, n_grid=3000, n_nodes=512, iters=80, succ=None):
     """Dinkelbach + 後ろ向き帰納で最適スループット g* と各段の関門 d_j* を求める。"""
     K = len(seg_dists) - 1
+    succ = _norm_succ(succ, K + 1)
     s_hi = sum(d.support_hi for d in seg_dists)
     grid = np.linspace(0.0, s_hi, n_grid)
     seg_nodes = [_segment_nodes(d, n_nodes) for d in seg_dists]
@@ -104,13 +124,13 @@ def optimize(seg_dists, times, D, n_grid=3000, n_nodes=512, iters=80):
     g_lo, g_hi = 0.0, 1.0 / max(times[0], 1e-9)
     for _ in range(iters):
         g_mid = 0.5 * (g_lo + g_hi)
-        V0, _ = _backward(g_mid, seg_dists, seg_nodes, times, D, grid)
+        V0, _ = _backward(g_mid, seg_dists, seg_nodes, times, D, grid, succ)
         if V0 > 0:                 # この g は達成可能 → もっと上げられる
             g_lo = g_mid
         else:
             g_hi = g_mid
     g_star = 0.5 * (g_lo + g_hi)
-    _, cont = _backward(g_star, seg_dists, seg_nodes, times, D, grid)
+    _, cont = _backward(g_star, seg_dists, seg_nodes, times, D, grid, succ)
     gates = {j: _gate_from_cont(cont[j], grid) for j in range(1, K + 1)}
     return g_star, gates, grid
 
@@ -118,7 +138,7 @@ def optimize(seg_dists, times, D, n_grid=3000, n_nodes=512, iters=80):
 # ---------------------------------------------------------------------------
 # 前向きパス: 与えた関門でのスループット・通過率・達成率(検証兼表示用)
 # ---------------------------------------------------------------------------
-def forward_metrics(seg_dists, times, D, gates, n_grid=4000, n_nodes=512):
+def forward_metrics(seg_dists, times, D, gates, n_grid=4000, n_nodes=512, succ=None):
     """関門 {j: d_j} を適用したときの (成功率, 平均時間, 長期率 g, 段別通過率) を返す。
 
     通過率・成功率は **区間増分の CDF(生存関数 1-F)** で計算する。各関門の通過
@@ -128,6 +148,7 @@ def forward_metrics(seg_dists, times, D, gates, n_grid=4000, n_nodes=512):
     通過率が 100% を超えていた。グリッドは最小セグメント幅を解像するよう自動調整する。
     """
     K = len(seg_dists) - 1
+    succ = _norm_succ(succ, K + 1)
     s_hi = sum(d.support_hi for d in seg_dists)
     # 全体台は数千万規模でも序盤セグメントの台幅は数万のことがある。最も狭い
     # セグメントを ~80 点以上で覆えるようグリッド点数を底上げ(前向きは一発計算)。
@@ -155,48 +176,65 @@ def forward_metrics(seg_dists, times, D, gates, n_grid=4000, n_nodes=512):
     seg0 = seg_dists[0]
     pass_rates = []
     exp_time = times[0]            # seg0 は必ず回す
+    q_cum = succ[0]               # ∏_{i<j} succ[i] (j=1 で succ[0])
     # a(s): 直前の関門まで通過した経路の、現チェックポイント累積の生存サブ密度。
     a = None
     for j in range(1, K + 1):
         if j == 1:
             # cp1 = seg0 後の累積。通過率は CDF で厳密に。
-            p_j = clamp(surv(seg0, np.array([gates[1]]))[0])
+            p_dmg = clamp(surv(seg0, np.array([gates[1]]))[0])
             dens_cp = np.where((grid >= seg0.support_lo) & (grid <= seg0.support_hi),
                                seg0.pdf(grid), 0.0)
         else:
-            # p_j = ∫ a(s)·P(直前セグメント増分 >= d_j - s) ds (生存関数で計算)
+            # p_dmg = ∫ a(s)·P(直前セグメント増分 >= d_j - s) ds (生存関数で計算)
             prev = seg_dists[j - 1]
-            p_j = clamp(np.trapezoid(a * surv(prev, gates[j] - grid), grid))
+            p_dmg = clamp(np.trapezoid(a * surv(prev, gates[j] - grid), grid))
             # 次チェックポイントの累積密度 = a を直前セグメントで畳み込み
             dens_cp = conv_density(a, seg_nodes[j - 1])
+        p_j = clamp(q_cum * p_dmg)        # 独立成功確率込みの真の累積通過率
         pass_rates.append(p_j)
-        exp_time += times[j] * p_j        # seg j は gate j 通過時のみ回す
+        exp_time += times[j] * p_j        # seg j は gate j 到達時のみ回す
         # 関門 d_j で打ち切った生存サブ密度を次段へ
         a = np.where(grid >= gates[j], dens_cp, 0.0)
+        q_cum *= succ[j]                  # ∏_{i<=j} succ[i] (次段用)
     # 最終: gate K 通過後 seg K を回して合計 >= D。成功も生存関数で。
     last = seg_dists[K]
-    success = clamp(np.trapezoid(a * surv(last, D - grid), grid))
+    success = clamp(q_cum * clamp(np.trapezoid(a * surv(last, D - grid), grid)))
     g = success / exp_time if exp_time > 0 else 0.0
     return {"success": success, "exp_time": exp_time, "g": g, "pass_rates": pass_rates}
 
 
-def baseline_nogate(full, times, D):
-    """足切り無し(全部回す)の成功率・時間・長期率。full は全体の SumDist。"""
+def baseline_nogate(full, times, D, succ=None):
+    """足切り無し(全部回す)の成功率・時間・長期率。full は全体の SumDist。
+
+    succ は区間 (= len(times) 個) ごとのダメージと独立な成功確率。足切り無しでも
+    独立成功判定の失敗ではリスタートが起きる(時間は消費済み)ため、成功率は全区間の
+    独立成功積 ∏succ を掛け、期待時間は区間 j に到達する確率 ∏_{i<j} succ[i] で重み
+    づける: T = Σ_j t_j·∏_{i<j} succ[i]。succ=None (全 1) なら従来どおり P, Σt。
+    """
     P = 1.0 - float(full.cdf(np.array([D]))[0])
-    T = sum(times)
+    if succ is None:
+        succ = [1.0] * len(times)
+    T = 0.0
+    q = 1.0
+    for t, s in zip(times, succ):
+        T += t * q                 # 区間に到達する確率ぶん時間を課金
+        q *= s                     # 次区間到達確率 (ループ後 q = ∏ succ)
+    P *= q                          # 全区間の独立成功を満たして初めて達成
     return {"success": P, "exp_time": T, "g": P / T if T > 0 else 0.0}
 
 
 # ---------------------------------------------------------------------------
 # エントリ: 多段リスタ解析
 # ---------------------------------------------------------------------------
-def analyze(hit_mixtures, checkpoints, hit_times, D):
+def analyze(hit_mixtures, checkpoints, hit_times, D, seg_success=None):
     """和モデルの多段リスタ最適化。
 
     hit_mixtures : 各ヒットの一様混合 (build_hit_mixtures の出力)
     checkpoints  : チェックポイントのヒット数 m_j (1..n-1) のリスト
     hit_times    : 各ヒットの所要時間 (長さ n) または スカラー (全ヒット同一)
     D            : 目標ダメージ
+    seg_success  : 区間 (= K+1 個) ごとのダメージと独立な成功確率 (None なら全 1)
     返り値: dict(関門 d_j*, 段別通過率, スループット, 足切り無し比, セグメント情報 ...)
     """
     n = len(hit_mixtures)
@@ -206,11 +244,12 @@ def analyze(hit_mixtures, checkpoints, hit_times, D):
     # セグメント所要時間 = そのセグメントに含まれるヒットの時間和
     times = [float(sum(hit_times[bounds[i]:bounds[i + 1]]))
              for i in range(len(bounds) - 1)]
+    succ = _norm_succ(seg_success, len(bounds) - 1)
     full = build_sum_dist(hit_mixtures)
 
-    base = baseline_nogate(full, times, D)
-    g_star, gates, _grid = optimize(seg_dists, times, D)
-    fwd = forward_metrics(seg_dists, times, D, gates)
+    base = baseline_nogate(full, times, D, succ)
+    g_star, gates, _grid = optimize(seg_dists, times, D, succ=succ)
+    fwd = forward_metrics(seg_dists, times, D, gates, succ=succ)
 
     cum_max = np.cumsum([d.support_hi for d in seg_dists])  # 各cp到達時の累積上限(参考)
     gates_dmg = {k: gates[k] for k in gates}
@@ -286,11 +325,12 @@ def split_segments_product(ymix_per_hit, hp, checkpoints):
     return seg, bounds, cps
 
 
-def analyze_product(ymix_per_hit, hp, checkpoints, hit_times, D):
+def analyze_product(ymix_per_hit, hp, checkpoints, hit_times, D, seg_success=None):
     """積モデル(HP依存)の多段リスタ最適化。和モデルと同じ DP を G=-Σln Y 座標で実行。
 
     ymix_per_hit : 各ヒットの Y=1-βx 混合 (y_mixture の出力)
     hp           : HPParams
+    seg_success  : 区間 (= K+1 個) ごとのダメージと独立な成功確率 (None なら全 1)
     返り値は analyze と同形式 (gate はダメージ値に逆変換済み)。
     """
     n = len(ymix_per_hit)
@@ -300,13 +340,14 @@ def analyze_product(ymix_per_hit, hp, checkpoints, hit_times, D):
     seg_dists, bounds, cps = split_segments_product(ymix_per_hit, hp, checkpoints)
     times = [float(sum(hit_times[bounds[i]:bounds[i + 1]]))
              for i in range(len(bounds) - 1)]
+    succ = _norm_succ(seg_success, len(bounds) - 1)
     full_pd = build_product_dist(ymix_per_hit, hp)
 
     # 達成しきい値: D_n >= D ⟺ G_n >= D_thr = -ln((Htil-D)/Htil)
     D_thr = float("inf") if D >= Htil else -math.log1p(-D / Htil)
-    base = baseline_nogate(full_pd, times, D)        # ProductDist.cdf はダメージ CDF
-    g_star, gates_G, _grid = optimize(seg_dists, times, D_thr)
-    fwd = forward_metrics(seg_dists, times, D_thr, gates_G)
+    base = baseline_nogate(full_pd, times, D, succ)   # ProductDist.cdf はダメージ CDF
+    g_star, gates_G, _grid = optimize(seg_dists, times, D_thr, succ=succ)
+    fwd = forward_metrics(seg_dists, times, D_thr, gates_G, succ=succ)
 
     def g_to_dmg(g):
         return float(Htil * (1.0 - math.exp(-g))) if math.isfinite(g) else Htil

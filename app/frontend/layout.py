@@ -482,9 +482,21 @@ def _restart_page() -> html.Div:
                                        "alignItems": "center", "marginTop": "4px"},
                             ),
                             html.Div(
-                                "足切りを追加すると区間カードが分割されます。各区間カードに"
-                                "「時間割合(相対)」を入力してください(コスト = 期待時間 / 成功確率)。"
-                                "区間カードの「✕」でその足切りを解除できます。",
+                                [
+                                    "足切りを追加すると区間カードが分割されます。各区間カードに"
+                                    "「時間割合(相対)」を入力してください(コスト = 期待時間 / 成功確率)。"
+                                    "区間カードの「✕」でその足切りを解除できます。",
+                                    html.Br(),
+                                    html.Span(
+                                        "🎲 ダメージ外 成功率% ",
+                                        style={"color": "#0984e3", "fontWeight": "bold"}),
+                                    html.Span(
+                                        "= ダメージ(足切り)とは無関係な成功要因の確率。"
+                                        "区間を回しきって次へ進める割合で、失敗するとリスタート"
+                                        "(その区間の所要時間は消費)。100%なら従来どおりダメージ"
+                                        "足切りのみで判定します。",
+                                        style={"color": "#0984e3"}),
+                                ],
                                 style={"fontSize": "0.8rem", "color": "#888",
                                        "margin": "8px 0 6px"},
                             ),
@@ -704,6 +716,8 @@ def create_layout() -> html.Div:
             dcc.Store(id="restart-cp-store", data=[]),
             # 多段リスタ: 区間ごとの時間割合 (区間開始境界の累積ヒット数 → 相対重み)
             dcc.Store(id="restart-seg-time-store", data={"0": 1.0}),
+            # 多段リスタ: 区間ごとのダメージ独立成功確率 % (区間開始境界 → 0..100)
+            dcc.Store(id="restart-seg-success-store", data={"0": 100.0}),
             # 多段リスタ: 総ヒット数 (区間描画用)
             dcc.Store(id="restart-nhits", data=0),
         ],

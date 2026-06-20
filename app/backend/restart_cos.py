@@ -165,55 +165,77 @@ class _CosEngine:
 # ---------------------------------------------------------------------------
 # 後ろ向き帰納 (固定 g) と Dinkelbach
 # ---------------------------------------------------------------------------
-def _backward(eng: _CosEngine, g: float, times, D: float, want_gates: bool):
-    """固定 g で V0(g) を返す。want_gates なら各段の関門 d_j* も返す。"""
+def _backward(eng: _CosEngine, g: float, times, D: float, want_gates: bool,
+              succ):
+    """固定 g で V0(g) を返す。want_gates なら各段の関門 d_j* も返す。
+
+    succ[j] は区間 j のダメージと独立な成功確率 (区間を回しきってリスタートせず
+    次へ進める確率)。区間 j を続行すると時間 t_j を消費し、確率 succ[j] で次段へ、
+    1-succ[j] でリスタート (価値 0) なので、続行価値の期待値項に succ[j] が掛かる:
+        cont_j(s) = -g t_j + succ[j]·E[V_{j+1}(s+T_j)]。
+    succ が全て 1 なら独立確率なしの素の DP に一致する。
+    """
     K = len(eng.segs) - 1
     A = eng.indicator_coeffs(D)                 # V_{K+1} = 1{s>=D}
     gates = {}
     for j in range(K, 0, -1):
         cC, cS = eng.expect(A, j)               # E[V_{j+1}(s+T_j)]
-        cC = cC.copy()
+        cC = succ[j] * cC                        # 独立成功確率で割引 (新規配列)
+        cS = succ[j] * cS
         cC[0] -= g * times[j]                   # -g t_j (DC シフト)
         d_j = eng.find_gate(cC, cS)
         if want_gates:
             gates[j] = d_j
         A = eng.truncate(cC, cS, d_j)           # V_j = max(0, cont_j)
     cC, cS = eng.expect(A, 0)                    # E[V_1(0 + T_0)]
-    V0 = -g * times[0] + eng.eval(cC, cS, 0.0)
+    V0 = -g * times[0] + succ[0] * eng.eval(cC, cS, 0.0)
     return (V0, gates) if want_gates else V0
 
 
-def _optimize(eng: _CosEngine, times, D: float, iters: int = 60):
+def _optimize(eng: _CosEngine, times, D: float, succ, iters: int = 60):
     """Dinkelbach + 後ろ向き帰納で最適 g* と関門 d_j* を求める。"""
     g_lo, g_hi = 0.0, 1.0 / max(times[0], 1e-9)
     for _ in range(iters):
         g_mid = 0.5 * (g_lo + g_hi)
-        if _backward(eng, g_mid, times, D, want_gates=False) > 0:
+        if _backward(eng, g_mid, times, D, want_gates=False, succ=succ) > 0:
             g_lo = g_mid
         else:
             g_hi = g_mid
     g_star = 0.5 * (g_lo + g_hi)
-    _, gates = _backward(eng, g_star, times, D, want_gates=True)
+    _, gates = _backward(eng, g_star, times, D, want_gates=True, succ=succ)
     return g_star, gates
 
 
 # ---------------------------------------------------------------------------
 # 前向きパス: 通過率・成功率・期待時間(係数空間の積分)
 # ---------------------------------------------------------------------------
-def forward_metrics(eng: _CosEngine, times, D: float, gates):
+def forward_metrics(eng: _CosEngine, times, D: float, gates, succ=None):
+    """関門固定で通過率・成功率・期待時間を算出。
+
+    succ[j] は区間 j の独立成功確率。区間 j を回しきって次へ進むには、ダメージ関門に
+    加えて区間 0..j-1 の独立成功 (∏_{i<j} succ[i]) が必要。区間 j の所要時間は、その
+    区間に到達して回す確率 = (∏_{i<j} succ[i])·(ダメージ関門の累積通過率) で課金される
+    (失敗時も区間を回しきってからリスタートするため時間は消費済み)。成功 (完走) には
+    最終区間 K の独立成功も要るので ∏_{i<=K} succ[i] が掛かる。pass_rates は表示用に
+    独立確率を含めた真の累積通過率を返す。
+    """
     K = len(eng.segs) - 1
+    succ = _seg_success(succ, K + 1)
     clamp = lambda p: min(1.0, max(0.0, float(p)))
     C = eng.density_coeffs(0)                    # cp1 の累積 = seg0 増分の密度
     S = np.zeros_like(C)
     pass_rates = []
-    exp_time = times[0]
+    exp_time = times[0]                          # seg0 は必ず回す
+    q_cum = succ[0]                              # ∏_{i<j} succ[i] (j=1 で succ[0])
     for j in range(1, K + 1):
-        p_j = clamp(eng.integrate(C, S, gates[j]))
+        p_dmg = clamp(eng.integrate(C, S, gates[j]))   # ダメージ関門のみの累積通過率
+        p_j = clamp(q_cum * p_dmg)                     # 独立確率込みの真の累積通過率
         pass_rates.append(p_j)
-        exp_time += times[j] * p_j
+        exp_time += times[j] * p_j               # 区間 j に到達して回す確率ぶん課金
         c_tr = eng.truncate(C, S, gates[j])      # 関門通過後の生存サブ密度 (余弦のみ)
         C, S = eng.convolve(c_tr, j)             # 次チェックポイントへ
-    success = clamp(eng.integrate(C, S, D))      # gate K 通過後 seg K を回して >= D
+        q_cum *= succ[j]                         # ∏_{i<=j} succ[i] (次段 j+1 用)
+    success = clamp(q_cum * clamp(eng.integrate(C, S, D)))  # 完走 = ∏_{i<=K} succ·達成
     g = success / exp_time if exp_time > 0 else 0.0
     return {"success": success, "exp_time": exp_time, "g": g, "pass_rates": pass_rates}
 
@@ -251,31 +273,48 @@ def _seg_times(hit_times, bounds):
             for i in range(len(bounds) - 1)]
 
 
+def _seg_success(seg_success, n_segs):
+    """区間ごとのダメージ独立成功確率を長さ n_segs (= K+1) の list に正規化する。
+    None なら全 1.0 (独立確率なし = 素の DP)。各値は [0, 1] にクランプ。"""
+    if seg_success is None:
+        return [1.0] * n_segs
+    out = [1.0] * n_segs
+    for i in range(n_segs):
+        try:
+            out[i] = min(1.0, max(0.0, float(seg_success[i])))
+        except (TypeError, ValueError, IndexError):
+            out[i] = 1.0
+    return out
+
+
 # ---------------------------------------------------------------------------
 # エントリ
 # ---------------------------------------------------------------------------
-def analyze(hit_mixtures, checkpoints, hit_times, D, manual_gates=None):
+def analyze(hit_mixtures, checkpoints, hit_times, D, manual_gates=None,
+            seg_success=None):
     """和モデルの多段リスタ最適化(係数空間版)。restart.analyze と同形式を返す。
 
     manual_gates を渡すと最適化せず、その関門 (各 cp の累積ダメージしきい値) で
     前向き評価する。リスタライン手動調整 (インタラクティブ表示) 用。
+    seg_success は区間 (= K+1 個) ごとのダメージと独立な成功確率の list (None なら全 1)。
     """
     n = len(hit_mixtures)
     if isinstance(hit_times, (int, float)):
         hit_times = [float(hit_times)] * n
     bounds, cps = _split_bounds(n, checkpoints)
     times = _seg_times(hit_times, bounds)
+    succ = _seg_success(seg_success, len(bounds) - 1)
     eng = _CosEngine(_segs_sum(hit_mixtures, bounds))
 
     full = build_sum_dist(hit_mixtures)
-    base = baseline_nogate(full, times, D)
+    base = baseline_nogate(full, times, D, succ)
     if manual_gates is None:
-        g_star, gates = _optimize(eng, times, D)
+        g_star, gates = _optimize(eng, times, D, succ)
     else:
         gates = {k: float(np.clip(manual_gates[k - 1], eng.a, eng.b))
                  for k in range(1, len(cps) + 1)}
         g_star = float("nan")
-    fwd = forward_metrics(eng, times, D, gates)
+    fwd = forward_metrics(eng, times, D, gates, succ)
 
     cum_max = np.cumsum([s.s_hi for s in eng.segs])
     gates_dmg = {k: gates[k] for k in gates}
@@ -284,10 +323,11 @@ def analyze(hit_mixtures, checkpoints, hit_times, D, manual_gates=None):
 
 
 def analyze_product(ymix_per_hit, hp: HPParams, checkpoints, hit_times, D,
-                    manual_gates=None):
+                    manual_gates=None, seg_success=None):
     """積モデル(HP依存)の多段リスタ最適化(係数空間版)。G=-Σ ln Y 座標で実行。
 
     manual_gates (各 cp の累積ダメージしきい値) を渡すと最適化せず前向き評価する。
+    seg_success は区間 (= K+1 個) ごとのダメージと独立な成功確率の list (None なら全 1)。
     """
     n = len(ymix_per_hit)
     if isinstance(hit_times, (int, float)):
@@ -295,12 +335,13 @@ def analyze_product(ymix_per_hit, hp: HPParams, checkpoints, hit_times, D,
     Htil = hp.Htil
     bounds, cps = _split_bounds(n, checkpoints)
     times = _seg_times(hit_times, bounds)
+    succ = _seg_success(seg_success, len(bounds) - 1)
     eng = _CosEngine(_segs_product(ymix_per_hit, bounds))
 
     # 達成しきい値: D_n >= D ⟺ G_n >= D_thr = -ln((Htil-D)/Htil)
     D_thr = float("inf") if D >= Htil else -math.log1p(-D / Htil)
     full_pd = build_product_dist(ymix_per_hit, hp)
-    base = baseline_nogate(full_pd, times, D)
+    base = baseline_nogate(full_pd, times, D, succ)
 
     def dmg_to_g(dmg):
         if dmg <= 0:
@@ -308,13 +349,13 @@ def analyze_product(ymix_per_hit, hp: HPParams, checkpoints, hit_times, D,
         return float("inf") if dmg >= Htil else -math.log1p(-dmg / Htil)
 
     if manual_gates is None:
-        g_star, gates_G = _optimize(eng, times, D_thr)
+        g_star, gates_G = _optimize(eng, times, D_thr, succ)
     else:
         gates_G = {k: float(np.clip(dmg_to_g(float(manual_gates[k - 1])),
                                     eng.a, eng.b))
                    for k in range(1, len(cps) + 1)}
         g_star = float("nan")
-    fwd = forward_metrics(eng, times, D_thr, gates_G)
+    fwd = forward_metrics(eng, times, D_thr, gates_G, succ)
 
     def g_to_dmg(gv):
         return float(Htil * (1.0 - math.exp(-gv))) if math.isfinite(gv) else Htil

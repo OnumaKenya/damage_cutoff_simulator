@@ -119,6 +119,62 @@ def test_product_model_matches_grid():
         assert 0.0 <= r["pass_rate"] <= 1.0
 
 
+def test_seg_success_identity_when_all_one():
+    """seg_success が全1なら独立確率なしの素の結果と完全一致する。"""
+    hits, ht = _hits_and_times()
+    base = restart_cos.analyze(hits, _CPS, ht, _D)
+    ones = restart_cos.analyze(hits, _CPS, ht, _D,
+                               seg_success=[1.0] * (len(_CPS) + 1))
+    assert abs(base["throughput"] - ones["throughput"]) < 1e-12
+    assert abs(base["success"] - ones["success"]) < 1e-12
+
+
+def test_seg_success_matches_montecarlo():
+    """区間ごとの独立成功確率込みで、前向き通過率・成功率・期待時間を MC と照合。
+
+    最適化した関門 + 各区間の独立成功確率 succ で、係数空間版 forward_metrics の
+    通過率/成功率/期待時間が素朴な MC(末尾判定でリスタート、時間は消費)と一致する。
+    """
+    hits, ht = _hits_and_times()
+    bounds = [0, *_CPS, len(hits)]
+    times = [float(sum(ht[bounds[i]:bounds[i + 1]])) for i in range(len(bounds) - 1)]
+    K = len(_CPS)
+    succ = [0.9, 1.0, 0.8, 1.0, 0.95, 1.0, 0.7, 1.0][:K + 1]
+
+    # 最適化(独立確率込み)→ 関門
+    rc = restart_cos.analyze(hits, _CPS, ht, _D, seg_success=succ)
+    gates = {k + 1: r["gate"] for k, r in enumerate(rc["rows"])}
+    eng = restart_cos._CosEngine(restart_cos._segs_sum(hits, bounds))
+    fc = restart_cos.forward_metrics(eng, times, _D, gates, succ=succ)
+
+    rng = np.random.default_rng(11)
+    M = 400_000
+    los = [np.array([u.lo for u in mix]) for mix in hits]
+    his = [np.array([u.hi for u in mix]) for mix in hits]
+    ws = [np.array([u.weight for u in mix]) / sum(u.weight for u in mix) for mix in hits]
+    cum = np.zeros(M)
+    alive = np.ones(M, bool)
+    exp_time_mc = float(times[0])         # seg0 は必ず回す
+    pr = []
+    for j in range(len(bounds) - 1):
+        for h in range(bounds[j], bounds[j + 1]):
+            comp = rng.choice(len(ws[h]), size=M, p=ws[h])
+            x = los[h][comp] + rng.random(M) * (his[h][comp] - los[h][comp])
+            cum = cum + np.where(alive, x, 0.0)
+        # 区間 j 末尾で独立成功判定(失敗→以降リスタート、時間は消費済み)
+        alive = alive & (rng.random(M) < succ[j])
+        if j < K:
+            alive = alive & (cum >= gates[j + 1])
+            pr.append(alive.mean())
+            exp_time_mc += times[j + 1] * alive.mean()  # 次区間に到達した試行ぶん
+    succ_mc = (alive & (cum >= _D)).mean()
+
+    for k in range(K):
+        assert abs(fc["pass_rates"][k] - pr[k]) < 5e-3
+    assert abs(fc["success"] - succ_mc) < 5e-3
+    assert abs(fc["exp_time"] - exp_time_mc) < 5e-3 * fc["exp_time"]
+
+
 def test_forward_matches_montecarlo():
     """前向き通過率・成功率を素朴な MC と照合 (確定シード)。"""
     hits, ht = _hits_and_times()

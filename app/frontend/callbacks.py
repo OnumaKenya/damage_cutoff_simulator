@@ -201,6 +201,7 @@ def _assemble_cards_ordered(order, card_indices, param_values, param_ids):
     State({"type": "memo", "index": ALL}, "id"),
     State("restart-cp-store", "data"),
     State("restart-seg-time-store", "data"),
+    State("restart-seg-success-store", "data"),
     State("target-damage", "value"),
     State("global-crit-rate", "value"),
     State("global-evade-rate", "value"),
@@ -214,7 +215,7 @@ def _assemble_cards_ordered(order, card_indices, param_values, param_ids):
     prevent_initial_call=True,
 )
 def export_input(n_clicks, order, card_indices, param_values, param_ids,
-                 memo_values, memo_ids, cp_store, seg_times,
+                 memo_values, memo_ids, cp_store, seg_times, seg_success,
                  target_damage, gcrit, gevade, gstab, calc_method, damage_mode,
                  hp_mode, hp_H, hp_H1, hp_R0, hp_R1, restart_D):
     if not n_clicks:
@@ -226,8 +227,10 @@ def export_input(n_clicks, order, card_indices, param_values, param_ids,
     cps = sorted({int(c) for c in (cp_store or []) if 0 < int(c) < n})
     # 区間開始境界 (0, cps...) の時間割合だけを書き出す
     seg_times = seg_times or {}
+    seg_success = seg_success or {}
     boundaries = [0, *cps]
     segment_times = {str(b): float(seg_times.get(str(b), 1.0)) for b in boundaries}
+    segment_success = {str(b): float(seg_success.get(str(b), 100.0)) for b in boundaries}
 
     cards = []
     for idx, params in ordered:
@@ -245,7 +248,8 @@ def export_input(n_clicks, order, card_indices, param_values, param_ids,
             "restart_D": restart_D,
         },
         "cards": cards,
-        "restart": {"checkpoints": cps, "segment_times": segment_times},
+        "restart": {"checkpoints": cps, "segment_times": segment_times,
+                    "segment_success": segment_success},
     }
     return dict(content=json.dumps(data, ensure_ascii=False, indent=2),
                 filename="damage_cutoff_input.json")
@@ -261,6 +265,7 @@ def export_input(n_clicks, order, card_indices, param_values, param_ids,
     Output("sorted-indices", "data", allow_duplicate=True),
     Output("restart-cp-store", "data", allow_duplicate=True),
     Output("restart-seg-time-store", "data", allow_duplicate=True),
+    Output("restart-seg-success-store", "data", allow_duplicate=True),
     Output("io-status", "children"),
     Output("target-damage", "value"),
     Output("global-crit-rate", "value"),
@@ -289,7 +294,7 @@ def import_input(contents):
         if not isinstance(cards, list) or not cards:
             raise ValueError("カードが空です。")
     except Exception as exc:  # noqa: BLE001 - 不正ファイルはユーザーに表示
-        return (nu, nu, nu, nu, nu, nu, f"⚠ インポート失敗: {exc}", *globals_nu)
+        return (nu, nu, nu, nu, nu, nu, nu, f"⚠ インポート失敗: {exc}", *globals_nu)
 
     children = []
     total_hits = 0
@@ -307,13 +312,16 @@ def import_input(contents):
     seg_times = {str(k): float(v)
                  for k, v in (restart.get("segment_times", {}) or {}).items()}
     seg_times.setdefault("0", 1.0)
+    seg_success = {str(k): float(v)
+                   for k, v in (restart.get("segment_success", {}) or {}).items()}
+    seg_success.setdefault("0", 100.0)
 
     g = data.get("globals", {}) or {}
     def gv(key):
         return g[key] if key in g else nu
     msg = f"✅ {n} 枚のカードと設定を読み込みました。足切りライン最適化の設定も復元済みです。"
     return (
-        children, indices, n, indices, cps, seg_times, msg,
+        children, indices, n, indices, cps, seg_times, seg_success, msg,
         gv("target_damage"), gv("global_crit"), gv("global_evade"), gv("global_stability"),
         gv("calc_method"), gv("damage_mode"), gv("hp_mode"),
         gv("hp_H"), gv("hp_H1"), gv("hp_R0"), gv("hp_R1"), gv("restart_D"),
@@ -408,7 +416,7 @@ def _segments(cps, n):
     return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
 
 
-def _seg_card(idx, total, s, e, weight, end_label):
+def _seg_card(idx, total, s, e, weight, end_label, success=100.0):
     """区間カード 1 枚 (横長) を生成する。末尾以外は ✕ で足切り (境界 e) を解除。"""
     is_last = idx == total - 1
     head = "完走(最終区間)" if is_last else f"足切り{idx + 1}"
@@ -435,6 +443,27 @@ def _seg_card(idx, total, s, e, weight, end_label):
             ],
             style={"whiteSpace": "nowrap"},
         ),
+        # 中2: ダメージと独立な成功率 (%) 入力。この区間を回しきって次へ進める確率。
+        # 足切り(ダメージ)とは別要因であることが分かるよう、ラベル・色・注記で区別する。
+        html.Div(
+            [
+                html.Label(
+                    "🎲 ダメージ外 成功率% ",
+                    title="ダメージ(足切り)とは無関係な成功要因。この区間を回しきって"
+                          "次へ進める確率です。失敗するとリスタート(その区間の時間は消費)。"
+                          "100%=この要因では失敗しない(=ダメージ足切りのみ)。",
+                    style={"fontSize": "0.8rem", "color": "#0984e3",
+                           "fontWeight": "bold"}),
+                dcc.Input(id={"type": "restart-seg-success", "index": s}, type="number",
+                          value=success, min=0, max=100, step=1,
+                          style={"width": "64px", "marginLeft": "4px",
+                                 "border": "1px solid #0984e3", "color": "#0984e3"}),
+                html.Span("%", style={"fontSize": "0.8rem", "color": "#0984e3",
+                                      "marginLeft": "2px"}),
+            ],
+            style={"whiteSpace": "nowrap",
+                   "borderLeft": "1px solid #dfe6e9", "paddingLeft": "12px"},
+        ),
     ]
     # 右: 足切り解除 (末尾区間以外)
     cells.append(html.Button(
@@ -460,19 +489,22 @@ def _seg_card(idx, total, s, e, weight, end_label):
     Input("restart-nhits", "data"),
     Input("restart-cp-dropdown", "options"),
     State("restart-seg-time-store", "data"),
+    State("restart-seg-success-store", "data"),
     prevent_initial_call=True,
 )
-def render_restart_cards(cp_store, n, options, seg_times):
+def render_restart_cards(cp_store, n, options, seg_times, seg_success):
     segs = _segments(cp_store, n)
     if not segs:
         return html.Div("攻撃列が未読込です。「カード読込 / 更新」を押してください。",
                         style={"fontSize": "0.82rem", "color": "#d63031"})
     label_by = {opt["value"]: opt["label"] for opt in (options or [])}
     seg_times = seg_times or {}
+    seg_success = seg_success or {}
     cards = []
     for i, (s, e) in enumerate(segs):
         cards.append(_seg_card(i, len(segs), s, e,
-                               seg_times.get(str(s), 1.0), label_by.get(e, "")))
+                               seg_times.get(str(s), 1.0), label_by.get(e, ""),
+                               seg_success.get(str(s), 100.0)))
     return html.Div(cards, style={"display": "flex", "flexDirection": "column"})
 
 
@@ -490,6 +522,24 @@ def update_restart_seg_time(values, ids, store):
             store[str(sid["index"])] = float(v) if v is not None else 0.0
         except (TypeError, ValueError):
             store[str(sid["index"])] = 0.0
+    return store
+
+
+@callback(
+    Output("restart-seg-success-store", "data", allow_duplicate=True),
+    Input({"type": "restart-seg-success", "index": ALL}, "value"),
+    State({"type": "restart-seg-success", "index": ALL}, "id"),
+    State("restart-seg-success-store", "data"),
+    prevent_initial_call=True,
+)
+def update_restart_seg_success(values, ids, store):
+    """区間ごとのダメージ独立成功率 % (0..100) を Store へ。空欄/不正は 100% 扱い。"""
+    store = dict(store or {})
+    for v, sid in zip(values, ids):
+        try:
+            store[str(sid["index"])] = min(100.0, max(0.0, float(v)))
+        except (TypeError, ValueError):
+            store[str(sid["index"])] = 100.0
     return store
 
 
@@ -555,6 +605,7 @@ def _cutoff_figure(disp, title, *, color="#d63031", ref_disp=None):
     State({"type": "memo", "index": ALL}, "id"),
     State("restart-cp-store", "data"),
     State("restart-seg-time-store", "data"),
+    State("restart-seg-success-store", "data"),
     State("global-crit-rate", "value"),
     State("global-evade-rate", "value"),
     State("damage-mode", "value"),
@@ -566,7 +617,7 @@ def _cutoff_figure(disp, title, *, color="#d63031", ref_disp=None):
     prevent_initial_call=True,
 )
 def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
-                memo_values, memo_ids, cp_store, seg_times,
+                memo_values, memo_ids, cp_store, seg_times, seg_success_store,
                 global_crit, global_evade,
                 damage_mode, hp_mode, hp_H, hp_H1, hp_R0, hp_R1):
     if not n_clicks:
@@ -613,6 +664,17 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
     if sum(hit_times) <= 0:
         hit_times = [1.0] * n          # 全部0なら一様にフォールバック
 
+    # 区間ごとのダメージ独立成功確率: ストアは区間開始境界 → % (0..100)。
+    # 区間順 (0, cps...) に並べ、フラクション [0,1] へ変換 (未設定は 1.0)。
+    seg_success_store = seg_success_store or {}
+    seg_success = []
+    for s in bounds[:-1]:
+        try:
+            pct = float(seg_success_store.get(str(s), 100.0))
+        except (TypeError, ValueError):
+            pct = 100.0
+        seg_success.append(min(1.0, max(0.0, pct / 100.0)))
+
     D = float(D or 0)
     if D <= 0:
         return err("目標ダメージ D を正の値で入力してください。")
@@ -628,10 +690,11 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
         if D >= hp.Htil:
             return err(f"目標 D は H̃₁={hp.Htil:,.0f} 未満にしてください(到達不能)。")
         ymix = [y_mixture(m, hp.beta) for m in hits]
-        res = restart_cos.analyze_product(ymix, hp, cps, hit_times, D)
+        res = restart_cos.analyze_product(ymix, hp, cps, hit_times, D,
+                                          seg_success=seg_success)
         model_note = "積モデル(HP依存)"
     else:
-        res = restart_cos.analyze(hits, cps, hit_times, D)
+        res = restart_cos.analyze(hits, cps, hit_times, D, seg_success=seg_success)
         model_note = "和モデル(HP非依存)"
 
     # チェックポイントのヒット数 → カード名 の対応と、最終(完走)カード名を作る。
@@ -662,7 +725,7 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
         "model": "product" if hp_mode == "on" else "sum",
         "cards": cards, "crit": float(global_crit or 0),
         "evade": float(global_evade or 0), "damage_mode": damage_mode or "post_decay",
-        "cps": cps, "hit_times": hit_times, "D": D,
+        "cps": cps, "hit_times": hit_times, "seg_success": seg_success, "D": D,
         "hp": ({"H": float(hp_H), "H1": float(hp_H1),
                 "R0": float(hp_R0), "R1": float(hp_R1)} if hp_mode == "on" else None),
         "cum_to_label": cum_to_label, "last_label": last_label,
@@ -811,14 +874,17 @@ def update_restart_interactive(slider_values, slider_ids, cfg):
     manual_gates = [D - float(remains_by.get(m, D)) for m in cps]
 
     hits = _rebuild_for_config(cfg)
+    seg_success = cfg.get("seg_success")
     if cfg["model"] == "product":
         hp = HPParams(**cfg["hp"])
         ymix = [y_mixture(mm, hp.beta) for mm in hits]
         res = restart_cos.analyze_product(ymix, hp, cps, cfg["hit_times"], D,
-                                          manual_gates=manual_gates)
+                                          manual_gates=manual_gates,
+                                          seg_success=seg_success)
     else:
         res = restart_cos.analyze(hits, cps, cfg["hit_times"], D,
-                                  manual_gates=manual_gates)
+                                  manual_gates=manual_gates,
+                                  seg_success=seg_success)
 
     disp = _restart_disp(res, cfg["cum_to_label"], cfg["last_label"], D)
     fig = _cutoff_figure(disp, "あなたの設定したリスタライン vs 最適",
