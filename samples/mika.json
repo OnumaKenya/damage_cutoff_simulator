@@ -1,0 +1,162 @@
+{
+  "version": 2,
+  "globals": {
+    "target_damage": 20000000,
+    "global_crit": 60,
+    "global_evade": 0,
+    "global_stability": null,
+    "calc_method": "cos",
+    "damage_mode": "post_decay",
+    "hp_mode": "off",
+    "hp_H": 1000000,
+    "hp_H1": 1000000,
+    "hp_R0": 1,
+    "hp_R1": 2,
+    "restart_D": 20000000
+  },
+  "cards": [
+    {
+      "params": {
+        "crit_min": 400000,
+        "crit_max": 500000,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "AA"
+    },
+    {
+      "params": {
+        "crit_min": 1779226,
+        "crit_max": 1779226,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット1 攻撃力549.97% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 513003,
+        "crit_max": 660855,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 5,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット2-6 攻撃力204.28% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 1779226,
+        "crit_max": 1779226,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット1 攻撃力549.97% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 513003,
+        "crit_max": 660855,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 5,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット2-6 攻撃力204.28% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 400000,
+        "crit_max": 500000,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": 0,
+        "enemies": 1
+      },
+      "memo": "AA"
+    },
+    {
+      "params": {
+        "crit_min": 1779226,
+        "crit_max": 1779226,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット1 攻撃力549.97% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 513003,
+        "crit_max": 660855,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 5,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット2-6 攻撃力204.28% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 1779226,
+        "crit_max": 1779226,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 1,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット1 攻撃力549.97% 確定会心"
+    },
+    {
+      "params": {
+        "crit_min": 513003,
+        "crit_max": 660855,
+        "normal_min": 50000,
+        "normal_max": 60000,
+        "hits": 5,
+        "crit_rate": 100,
+        "evade_rate": null,
+        "enemies": 1
+      },
+      "memo": "ヒット2-6 攻撃力204.28% 確定会心"
+    }
+  ],
+  "restart": {
+    "checkpoints": [
+      12
+    ],
+    "segment_times": {
+      "0": 1.0,
+      "12": 1.0
+    },
+    "segment_success": {
+      "0": 39.0,
+      "12": 100.0
+    }
+  }
+}

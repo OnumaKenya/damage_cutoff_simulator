@@ -455,7 +455,7 @@ def _seg_card(idx, total, s, e, weight, end_label, success=100.0):
                     style={"fontSize": "0.8rem", "color": "#0984e3",
                            "fontWeight": "bold"}),
                 dcc.Input(id={"type": "restart-seg-success", "index": s}, type="number",
-                          value=success, min=0, max=100, step=1,
+                          value=success, min=0, max=100, step=0.01,
                           style={"width": "64px", "marginLeft": "4px",
                                  "border": "1px solid #0984e3", "color": "#0984e3"}),
                 html.Span("%", style={"fontSize": "0.8rem", "color": "#0984e3",

@@ -43,7 +43,7 @@ def _choose_n_terms(b: float, widths: list[float]) -> int:
     if not (b > 0 and w > 0):
         return 1024
     n = int(math.ceil(b / (w / 12.0)))
-    return max(1024, min(8192, n))
+    return max(1024, min(16384, n))
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +64,20 @@ def _corr_valid(K: np.ndarray, x: np.ndarray) -> np.ndarray:
 class _CosEngine:
     def __init__(self, segs: list[_Seg]):
         self.segs = segs
-        self.b = float(sum(s.s_hi for s in segs))           # 累積ダメージ上限
+        self.b = float(sum(s.s_hi for s in segs))           # 真の累積ダメージ上限
+        max_seg = max((s.s_hi for s in segs), default=0.0)
         # 左端マージン: 半区間余弦の偶対称周期拡張による畳み込みエイリアシング
         # (ミラー像が台へ折り込む) を防ぐため、a を負側へ最大セグメント増分ぶん
-        # 開ける。これで各畳み込みでミラー+増分が [a,b] の外(左)に収まる。
-        self.a = -1.05 * max((s.s_hi for s in segs), default=0.0)
-        self.L = self.b - self.a
+        # 開ける。これで各畳み込みでミラー+増分が [a,b_pad] の外(左)に収まる。
+        self.a = -1.05 * max_seg
+        # 右端マージン: 後ろ向き期待値 E[V(s+T)] は引数 s+T が真の上限 b を右に
+        # 超える (s<=b, T<=max_seg)。半区間余弦は基底上端について反射する周期拡張な
+        # ので、右にマージンを取らないと s+T>b の領域の値 (指示関数なら 1) が
+        # [a,b] へ折り返り、本来単調増加の続行価値 cont_j(s) が高 s 側で崩れて
+        # find_gate が誤って到達不能 (gate=b) を返す。基底上端を b_pad=b+max_seg と
+        # し、評価域 [0,b] では s+T<b_pad に収めて反射を排除する。
+        self.b_pad = self.b + 1.05 * max_seg
+        self.L = self.b_pad - self.a
         widths = [s.s_hi - s.s_lo for s in segs]
         self.N = _choose_n_terms(self.L, widths)
         self.u = np.arange(self.N) * np.pi / self.L          # u_k
@@ -97,7 +105,7 @@ class _CosEngine:
         da = d - self.a
         sc = np.empty(length)
         ss = np.empty(length)
-        sc[0] = self.b - d
+        sc[0] = self.b_pad - d        # 基底上端まで積分 (真の上限超の台は密度0)
         ss[0] = 0.0
         urn = ur[1:]
         sc[1:] = -np.sin(urn * da) / urn
@@ -141,7 +149,7 @@ class _CosEngine:
     def indicator_coeffs(self, D: float) -> np.ndarray:
         """1{s>=D} の半区間余弦係数 (チルダ規約)。"""
         c = np.empty(self.N)
-        c[0] = (self.b - D) / self.L
+        c[0] = (self.b_pad - D) / self.L      # 指示関数は [D, b_pad] で 1
         un = self.u[1:]
         c[1:] = -(2.0 / self.L) * np.sin(un * (D - self.a)) / un
         return c
