@@ -697,6 +697,17 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
         res = restart_cos.analyze(hits, cps, hit_times, D, seg_success=seg_success)
         model_note = "和モデル(HP非依存)"
 
+    # 最適足切りラインの単調化(表示用)。残りダメージが途中で増加する関門は、累積
+    # ダメージが単調増加する以上「手前のより高い関門を通過した時点で自動的に満たされ
+    # る冗長な関門」である(cp_i 通過 ⇒ cum>=g_i>g_j なので g_j は誰も足切りしない)。
+    # 各関門を running max に引き上げても足切り判定・通過率・スループットは不変なので、
+    # 実効的で単調な足切りラインを表示する。手動調整パス(update_restart_gates)は
+    # 利用者入力をそのまま尊重するため触らない。
+    run_max = 0.0
+    for r in res["rows"]:
+        run_max = max(run_max, r["gate"])
+        r["gate"] = run_max
+
     # チェックポイントのヒット数 → カード名 の対応と、最終(完走)カード名を作る。
     memo_by = {mid["index"]: (v or "") for v, mid in zip(memo_values, memo_ids)}
     cum = 0
@@ -740,14 +751,11 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
     }
     sliders = _gate_sliders(cps, res["rows"], cum_to_label, D)
 
-    # 残りダメージが途中で増加する(=関門が累積ダメージで非単調)場合の注記。
-    # これは不具合ではなく、後続区間の所要時間が大きいほど DP がその手前の関門を
-    # 厳しくする(高コスト区間に入る前に「見切り」をつける)ため。関門通過後は
-    # 削るだけなので、通過率がほぼ変わらない関門は実質的に拘束していない。
-    # (最終=残り0 の行は常に最小なので除外して判定する。)
-    real_remains = [d[1] for d in disp if not d[4]]
-    non_monotonic = any(real_remains[i] > real_remains[i - 1] + 0.5
-                        for i in range(1, len(real_remains)))
+    # 冗長な関門の注記。区間通過率がほぼ100%の関門は、そのチェックポイントに到達した
+    # 試行をほとんど足切りしていない(手前のより厳しい関門で既に絞られている、または
+    # まだ見切る段階でない)= 設定から外しても結果は変わらない。最終(完走)行は除外。
+    redundant = any(sect >= 0.995 for (_lbl, _rem, sect, _cum, is_final) in disp
+                    if not is_final)
 
     # --- サマリ ---
     base = res["baseline"]
@@ -784,13 +792,12 @@ def run_restart(n_clicks, D, order, card_indices, param_values, param_ids,
             style={"color": "#777", "fontSize": "0.8rem", "marginTop": "6px"},
         ),
     ]
-    if non_monotonic:
+    if redundant:
         children.append(html.Div(
-            "※ 残りダメージが途中で増加している箇所があります。これは不具合ではなく、"
-            "後続区間の所要時間(時間割合)が大きいほど、その手前の関門を厳しく"
-            "(残りダメージを小さく)するのが最適なためです。関門を通過した後は累積"
-            "ダメージが増えるだけなので、通過率がほぼ変わらない関門は実質的に拘束して"
-            "おらず、設定上は無くても結果は変わりません。",
+            "※ 区間通過率がほぼ100%の関門は、実質的に足切りしていません(手前のより"
+            "厳しい関門で既に絞られている、またはまだ見切る段階でないため)。最適ライン"
+            "は冗長な関門を手前の水準まで引き上げて単調化(残りダメージが増えないよう)"
+            "して表示しています。これらの関門は設定から外しても結果は変わりません。",
             style={"color": "#b35900", "fontSize": "0.85rem", "marginTop": "8px"},
         ))
     summary = html.Div(children)

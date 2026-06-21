@@ -85,6 +85,9 @@ class _CosEngine:
         self.pref[0] = 1.0 / self.L
         # 各セグメント増分の CF を u_k 上で前計算 (g に依らない)
         self.phi = [s.cf(self.u) for s in segs]
+        # 各チェックポイント j (1..K) で取りうる累積ダメージの物理上限
+        # = Σ_{i<j} s_hi。cum_hi[j-1] が cp j の上限 (find_gate の探索上限に使う)。
+        self.cum_hi = np.cumsum([s.s_hi for s in segs])
 
     # ---- 余弦係数 <-> 値 ----
     def density_coeffs(self, seg_index: int) -> np.ndarray:
@@ -154,13 +157,22 @@ class _CosEngine:
         c[1:] = -(2.0 / self.L) * np.sin(un * (D - self.a)) / un
         return c
 
-    def find_gate(self, C: np.ndarray, S: np.ndarray) -> float:
-        """cont(s)=eval(C,S,s) が初めて >=0 になる s (単調増加を仮定, 二分法)。"""
-        lo, hi = 0.0, self.b
+    def find_gate(self, C: np.ndarray, S: np.ndarray, hi: float | None = None) -> float:
+        """cont(s)=eval(C,S,s) が初めて >=0 になる s (単調増加を仮定, 二分法)。
+
+        hi = そのチェックポイントの累積ダメージ物理上限 (既定 self.b)。探索上限を
+        物理上限に絞ることで (1) s+T が真の上限 b を超えず反射域 [hi, b] を評価せず、
+        (2) 続行不利時の sentinel が hi になり 残り D-gate >= D-hi が構造的に非負に
+        収まる (足切りが物理上限を超える=負の残り、という退化を防ぐ)。下限は 0 のまま
+        にして真のゼロ交点で打ち切り、価値関数 V=max(0,cont) をそこで連続に保つ
+        (下限を物理下限へ持ち上げると不連続が生じリンギングが増える)。"""
+        lo = 0.0
+        if hi is None:
+            hi = self.b
         if self.eval(C, S, lo) >= 0.0:
-            return 0.0
+            return lo
         if self.eval(C, S, hi) < 0.0:
-            return self.b              # どこでも続行不利 (到達不能)
+            return hi                  # 物理上限でも続行不利 (事実上到達不能)
         for _ in range(60):
             mid = 0.5 * (lo + hi)
             if self.eval(C, S, mid) >= 0.0:
@@ -191,7 +203,7 @@ def _backward(eng: _CosEngine, g: float, times, D: float, want_gates: bool,
         cC = succ[j] * cC                        # 独立成功確率で割引 (新規配列)
         cS = succ[j] * cS
         cC[0] -= g * times[j]                   # -g t_j (DC シフト)
-        d_j = eng.find_gate(cC, cS)
+        d_j = eng.find_gate(cC, cS, hi=float(eng.cum_hi[j - 1]))  # cp j の物理上限まで
         if want_gates:
             gates[j] = d_j
         A = eng.truncate(cC, cS, d_j)           # V_j = max(0, cont_j)
