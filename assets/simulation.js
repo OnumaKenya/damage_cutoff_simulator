@@ -309,6 +309,49 @@
     return { shapes: shapes, annotations: annotations };
   }
 
+  // 累積分布関数 (CDF) の図を作る。xs 昇順, cdf は [0,1] の単調非減少。
+  // 目標が指定されていれば縦線 + その点の通過確率 (1-CDF) を注記する。
+  function cdfFigure(xs, cdf, mean, target, title, xLabel, xRange) {
+    // それ以上になる確率 P(D≥x) = 1 - CDF を表示する (反転)。
+    var y = new Array(cdf.length);
+    for (var i = 0; i < cdf.length; i++) y[i] = (1 - cdf[i]) * 100;
+    var shapes = [{ type: "line", x0: mean, x1: mean, y0: 0, y1: 1, yref: "paper",
+                    line: { dash: "dash", color: "red" } }];
+    var annotations = [{ x: mean, y: 1, yref: "paper", text: "期待値: " + fmt(mean),
+                         showarrow: false, yanchor: "bottom" }];
+    if (target > 0) {
+      // target の CDF を線形補間し、通過確率 = 100 - CDF(%) を求める。
+      var cdfAt = 0;
+      if (target <= xs[0]) cdfAt = cdf[0];
+      else if (target >= xs[xs.length - 1]) cdfAt = cdf[cdf.length - 1];
+      else {
+        for (var j = 1; j < xs.length; j++) {
+          if (xs[j] >= target) {
+            var denom = xs[j] - xs[j - 1];
+            var t = denom > 0 ? (target - xs[j - 1]) / denom : 0;
+            cdfAt = cdf[j - 1] + t * (cdf[j] - cdf[j - 1]);
+            break;
+          }
+        }
+      }
+      shapes.push({ type: "line", x0: target, x1: target, y0: 0, y1: 1, yref: "paper",
+                    line: { color: "green" } });
+      annotations.push({ x: target, y: 1, yref: "paper",
+                         text: "目標: " + fmt(target) + " (通過 " + ((1 - cdfAt) * 100).toFixed(2) + "%)",
+                         showarrow: false, yanchor: "bottom" });
+    }
+    return {
+      data: [{ x: Array.prototype.slice.call(xs), y: y, type: "scatter", mode: "lines",
+               line: { color: "#7b1fa2" }, name: "P(D≥x)" }],
+      layout: {
+        title: title,
+        xaxis: { title: { text: xLabel }, range: xRange || undefined },
+        yaxis: { title: { text: "それ以上になる確率 (%)" }, range: [0, 100] },
+        shapes: shapes, annotations: annotations,
+      },
+    };
+  }
+
   // 分布の有効域 (中央 lowP〜highP の質量を覆う x 範囲) を返す。
   // weights は正規化不要 (pdf 値でも頻度でも可)。両端に少しパディングを付ける。
   function massRange(xs, weights, lowP, highP) {
@@ -388,20 +431,24 @@
         passText = "目標ダメージ " + fmt(target) + " の通過確率: " + ex.toFixed(2) + "% (COS法)";
       }
       var xRangeCos = massRange(dist.x, dist.pdf, 0.001, 0.999);
+      var xLabelCos = hpMode === "on" ? "累積ダメージ" : "合計ダメージ";
       var figureCos = {
         data: [{ x: dist.x, y: dist.pdf, type: "scatter", mode: "lines",
                  fill: "tozeroy", name: "ダメージ密度 (COS法)" }],
         layout: {
           title: title + " — COS 法",
           xaxis: {
-            title: hpMode === "on" ? "累積ダメージ" : "合計ダメージ",
+            title: { text: xLabelCos },
             range: xRangeCos || undefined,
           },
-          yaxis: { title: "確率密度" },
+          yaxis: { title: { text: "確率密度" } },
           shapes: mk.shapes, annotations: mk.annotations,
         },
       };
-      return [figureCos, passText];
+      var cdfFigCos = cdfFigure(dist.x, dist.cdf, dist.mean, target,
+                                "それ以上になる確率 P(D≥x) — COS 法", xLabelCos, xRangeCos);
+      var tblCos = { grid: Array.prototype.slice.call(dist.x), cdf: Array.prototype.slice.call(dist.cdf) };
+      return [figureCos, passText, cdfFigCos, tblCos, target > 0 ? target : null];
     }
 
     // -------- モンテカルロ --------
@@ -420,20 +467,53 @@
         "目標ダメージ " + fmt(target) + " の通過確率: " + passRate.toFixed(2) + "% (MC)";
     }
     var xRangeMc = massRange(hist.x, hist.y, 0.001, 0.999);
+    var xLabelMc = hpMode === "on" ? "累積ダメージ" : "合計ダメージ";
     var figure = {
       data: [{ x: hist.x, y: hist.y, type: "bar", width: hist.binWidth * 0.95, name: "ダメージ分布" }],
       layout: {
         title: title + " — モンテカルロ",
         xaxis: {
-          title: hpMode === "on" ? "累積ダメージ" : "合計ダメージ",
+          title: { text: xLabelMc },
           range: xRangeMc || undefined,
         },
-        yaxis: { title: "頻度" },
+        yaxis: { title: { text: "頻度" } },
         bargap: 0.05,
         shapes: mkm.shapes, annotations: mkm.annotations,
       },
     };
-    return [figure, passTextMc];
+    // ヒストグラム頻度の累積和から経験 CDF を構築 (x = 各ビンの右端)。
+    var totalCount = totalDamage.length;
+    var cdfXs = new Array(hist.x.length);
+    var cdfYs = new Array(hist.x.length);
+    var run = 0;
+    for (var c = 0; c < hist.x.length; c++) {
+      run += hist.y[c];
+      cdfXs[c] = hist.x[c] + hist.binWidth / 2;
+      cdfYs[c] = run / totalCount;
+    }
+    var cdfFigMc = cdfFigure(cdfXs, cdfYs, hist.mean, target,
+                             "それ以上になる確率 P(D≥x) — モンテカルロ", xLabelMc, xRangeMc);
+    var tblMc = { grid: cdfXs, cdf: cdfYs };
+    return [figure, passTextMc, cdfFigMc, tblMc, target > 0 ? target : null];
+  };
+
+  // =========================================================================
+  // 通過確率 ⇄ ダメージ 変換 (CDF テーブルを逆引き)
+  // =========================================================================
+  // ダメージ → 通過確率 P(D≥x) を % 文字列で返す。
+  ns.sim.damageToProb = function (damage, table) {
+    if (!table || !table.grid || !table.grid.length) return "—";
+    var d = parseFloat(damage);
+    if (!isFinite(d)) return "—";
+    return ns.cos.exceedanceProb(table, d).toFixed(2) + " %";
+  };
+  // 通過確率 (%) → 対応するダメージを返す。
+  ns.sim.probToDamage = function (prob, table) {
+    if (!table || !table.grid || !table.grid.length) return "—";
+    var p = parseFloat(prob);
+    if (!isFinite(p)) return "—";
+    p = Math.min(100, Math.max(0, p));
+    return ns.cos.valueAtExceedance(table, p).toLocaleString();
   };
 
   // =========================================================================

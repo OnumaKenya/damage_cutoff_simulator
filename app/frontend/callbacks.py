@@ -176,6 +176,60 @@ def ocr_add_cards(upload_contents, snip_data, children, indices, next_idx):
 
 
 # ---------------------------------------------------------------------------
+# テキスト貼り付け → カード自動生成 (サーバーサイド)
+# ---------------------------------------------------------------------------
+@callback(
+    Output("cards-container", "children", allow_duplicate=True),
+    Output("card-indices", "data", allow_duplicate=True),
+    Output("next-index", "data", allow_duplicate=True),
+    Output("sorted-indices", "data", allow_duplicate=True),
+    Output("text-status", "children"),
+    Output("hp-mode", "value", allow_duplicate=True),
+    Input("text-import-btn", "n_clicks"),
+    State("text-input", "value"),
+    State("cards-container", "children"),
+    State("card-indices", "data"),
+    State("next-index", "data"),
+    prevent_initial_call=True,
+)
+def text_add_cards(n_clicks, text, children, indices, next_idx):
+    """貼り付けテキストを解析し、抽出カードを追加する。"""
+    if not n_clicks or not (text or "").strip():
+        raise PreventUpdate
+
+    no_change = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
+
+    try:
+        result = ocr.cards_from_text(text)
+    except Exception as exc:  # noqa: BLE001 - 予期せぬ失敗もユーザーに表示
+        return (*no_change, f"⚠ 解析に失敗しました: {exc}", dash.no_update)
+
+    parsed = result["cards"]
+    if not parsed:
+        return (*no_change, "⚠ カードを検出できませんでした。テキストを確認してください。", dash.no_update)
+
+    for card in parsed:
+        children.append(make_damage_card(next_idx, params=card["params"], memo=card["memo"]))
+        indices.append(next_idx)
+        next_idx += 1
+
+    msgs = [f"✅ {len(parsed)} 枚のカードを追加しました。"]
+    hp_mode = dash.no_update
+    if result.get("hp_dependent"):
+        hp_mode = "on"
+        msgs.append("HP依存を検出 → サイドバーのHP依存モードをONにしました。")
+
+    return (
+        children,
+        indices,
+        next_idx,
+        _order_from_children(children),
+        " ".join(msgs),
+        hp_mode,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 多段リスタ最適化 (サーバーサイド: COS + Bermudan 後ろ向き帰納)
 # ---------------------------------------------------------------------------
 def _assemble_cards_ordered(order, card_indices, param_values, param_ids):

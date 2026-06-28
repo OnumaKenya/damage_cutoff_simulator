@@ -37,6 +37,9 @@ application.clientside_callback(
     "dash_clientside.sim.runSimulation",
     Output("result-graph", "figure"),
     Output("pass-rate-text", "children"),
+    Output("result-cdf-graph", "figure"),
+    Output("cdf-table-store", "data"),
+    Output("conv-damage-input", "value"),
     Input("run-btn", "n_clicks"),
     State({"type": "param", "param": ALL, "index": ALL}, "value"),
     State({"type": "param", "param": ALL, "index": ALL}, "id"),
@@ -53,6 +56,23 @@ application.clientside_callback(
     State("hp-H1", "value"),
     State("hp-R0", "value"),
     State("hp-R1", "value"),
+    prevent_initial_call=True,
+)
+
+# --- 通過確率 ⇄ ダメージ 変換 ---
+application.clientside_callback(
+    "dash_clientside.sim.damageToProb",
+    Output("conv-prob-output", "children"),
+    Input("conv-damage-input", "value"),
+    Input("cdf-table-store", "data"),
+    prevent_initial_call=True,
+)
+
+application.clientside_callback(
+    "dash_clientside.sim.probToDamage",
+    Output("conv-damage-output", "children"),
+    Input("conv-prob-input", "value"),
+    Input("cdf-table-store", "data"),
     prevent_initial_call=True,
 )
 

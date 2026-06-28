@@ -328,9 +328,85 @@ def _same_damage(a: dict, b: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# テキスト貼り付けからのカード生成
+# ---------------------------------------------------------------------------
+# OCR (parse_cards) と異なり、貼り付けテキストはヒット行・ダメージ行・「会心」行
+# がそれぞれ別の行に分かれている。
+#   一般       : ヒット行 → 通常ダメージ行 → 「会心」行 → 会心ダメージ行
+#   確定会心/確定非会心 : ヒット行 → ダメージ行 (会心行が続かない)
+# そのため OCR の「ヒット行に数値が並ぶ」前提は使えず、行ごとに状態を持って
+# entry を組み立てる。entry の形は parse_cards と同じなので _entry_to_card /
+# _merge_consecutive を共用する。
+
+
+def parse_text(text: str) -> dict:
+    """貼り付けテキストからカードパラメータと検出メタ情報を構築する。
+
+    戻り値: {"cards": [{"params": {...}, "memo": str}, ...],
+             "hp_dependent": bool}
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    entries: list[dict] = []
+    expect_crit = False  # 直前に「会心」行が来た → 次のダメージ行は会心
+    for line in lines:
+        hit = _hit_count(line)
+        if hit is not None:
+            count, label = hit
+            # 同一行に数値が並ぶ表記にも備え、ヒットラベルを除いてから抽出する
+            # ("ヒット1-2" の "1-2" を誤ってダメージとして拾わないため)。
+            remainder = _HIT_RE.sub(" ", line, count=1)
+            entries.append(
+                {
+                    "hits": count,
+                    "label": label,
+                    "first": _extract_damage(remainder),
+                    "crit": None,
+                    "pct": _extract_pct(line),
+                }
+            )
+            expect_crit = False
+            continue
+
+        if _is_crit_row(line):
+            expect_crit = True
+            # 「会心 35,239 - 48,979」のように同一行に数値があれば即取り込む
+            dmg = _extract_damage(line)
+            if dmg is not None and entries:
+                entries[-1]["crit"] = dmg
+                expect_crit = False
+            continue
+
+        # 数値のみの行 (通常 or 会心ダメージ)
+        dmg = _extract_damage(line)
+        if dmg is None or not entries:
+            continue
+        entry = entries[-1]
+        if expect_crit:
+            entry["crit"] = dmg
+            expect_crit = False
+        elif entry["first"] is None:
+            entry["first"] = dmg
+        elif entry["crit"] is None:
+            # 「会心」ラベルが省略され通常・会心の2行が続くケースの保険
+            entry["crit"] = dmg
+
+    cards = [_entry_to_card(e) for e in entries if e["first"] is not None]
+    cards = _merge_consecutive(cards)
+
+    rows = [{"text": ln} for ln in lines]
+    return {"cards": cards, "hp_dependent": _has_hp_dependency(rows)}
+
+
+# ---------------------------------------------------------------------------
 # 公開エントリポイント
 # ---------------------------------------------------------------------------
 def cards_from_image(image: str | bytes, *, api_key: str | None = None) -> dict:
     """画像 → {"cards": [...], "hp_dependent": bool}。"""
     tokens = vision_annotate(image, api_key=api_key)
     return parse_cards(tokens)
+
+
+def cards_from_text(text: str) -> dict:
+    """貼り付けテキスト → {"cards": [...], "hp_dependent": bool}。"""
+    return parse_text(text)

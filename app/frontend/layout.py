@@ -256,6 +256,62 @@ def _ocr_panel() -> html.Div:
     )
 
 
+def _text_panel() -> html.Div:
+    """テキスト貼り付け → カード自動生成パネル。"""
+    placeholder = (
+        "ダメージ表示のテキストを貼り付け\n"
+        "例:\n"
+        "ヒット1-2 (165.33%)\n"
+        "18,164 - 25,247\n"
+        "会心\n"
+        "35,239 - 48,979"
+    )
+    return html.Div(
+        [
+            html.Strong("📝 テキストからカード生成", style={"fontSize": "0.95rem"}),
+            dcc.Textarea(
+                id="text-input",
+                placeholder=placeholder,
+                style={
+                    "width": "100%",
+                    "boxSizing": "border-box",
+                    "height": "120px",
+                    "marginTop": "8px",
+                    "fontFamily": "monospace",
+                    "fontSize": "0.82rem",
+                    "resize": "vertical",
+                },
+            ),
+            html.Button(
+                "テキストから取り込み",
+                id="text-import-btn",
+                n_clicks=0,
+                style={
+                    "background": "#7c5cd9",
+                    "color": "white",
+                    "border": "none",
+                    "borderRadius": "6px",
+                    "padding": "8px 16px",
+                    "cursor": "pointer",
+                    "width": "100%",
+                    "marginTop": "8px",
+                },
+            ),
+            html.Div(
+                id="text-status",
+                style={"fontSize": "0.82rem", "color": "#666", "marginTop": "6px", "minHeight": "1.2em"},
+            ),
+        ],
+        style={
+            "border": "1px solid #7c5cd9",
+            "borderRadius": "8px",
+            "padding": "12px",
+            "marginBottom": "16px",
+            "background": "#f7f3ff",
+        },
+    )
+
+
 def _io_panel() -> html.Div:
     """入力情報のエクスポート / インポートパネル(カード + 全体設定 + 多段リスタ設定)。"""
     return html.Div(
@@ -412,6 +468,7 @@ def _sidebar() -> html.Div:
             # 積or和モデル → スクショ → インポートエクスポート → その他
             hp_section,
             _ocr_panel(),
+            _text_panel(),
             _io_panel(),
             calc_section,
             damage_section,
@@ -691,7 +748,63 @@ def create_layout() -> html.Div:
                             dcc.Loading(
                                 [
                                     html.Div(id="pass-rate-text", style={"fontSize": "1.2rem", "fontWeight": "bold", "marginBottom": "8px"}),
+                                    dcc.Store(id="cdf-table-store"),
+                                    html.Div(
+                                        [
+                                            html.Div(
+                                                "通過確率 ⇄ ダメージ 変換",
+                                                style={"fontWeight": "bold", "marginBottom": "6px"},
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Span("ダメージ", style={"marginRight": "6px"}),
+                                                    dcc.Input(
+                                                        id="conv-damage-input",
+                                                        type="number",
+                                                        placeholder="ダメージ",
+                                                        style={"width": "260px"},
+                                                    ),
+                                                    html.Span(" → 通過確率: ", style={"margin": "0 6px"}),
+                                                    html.Span(id="conv-prob-output", children="—", style={"fontWeight": "bold"}),
+                                                ],
+                                                style={"marginBottom": "4px"},
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Span("通過確率 (%)", style={"marginRight": "6px"}),
+                                                    dcc.Input(
+                                                        id="conv-prob-input",
+                                                        type="number",
+                                                        placeholder="%",
+                                                        min=0,
+                                                        max=100,
+                                                        style={"width": "140px"},
+                                                    ),
+                                                    html.Span(" → ダメージ: ", style={"margin": "0 6px"}),
+                                                    html.Span(id="conv-damage-output", children="—", style={"fontWeight": "bold"}),
+                                                ],
+                                            ),
+                                        ],
+                                        style={
+                                            "border": "1px solid #ccc",
+                                            "borderRadius": "6px",
+                                            "padding": "8px 12px",
+                                            "marginBottom": "12px",
+                                            "background": "#f7f7f7",
+                                        },
+                                    ),
                                     dcc.Graph(id="result-graph"),
+                                    dcc.Graph(
+                                        id="result-cdf-graph",
+                                        figure={
+                                            "data": [],
+                                            "layout": {
+                                                "title": "それ以上になる確率 P(D≥x)",
+                                                "xaxis": {"title": {"text": "合計ダメージ"}},
+                                                "yaxis": {"title": {"text": "それ以上になる確率 (%)"}, "range": [0, 100]},
+                                            },
+                                        },
+                                    ),
                                 ],
                                 type="circle",
                                 color="#4a90d9",
