@@ -1,7 +1,7 @@
 import os
 
 from dash import ALL, Input, Output, State
-from app import app as application
+from app import app as application, OCR_ENABLED
 from app.frontend.layout import create_layout
 import app.frontend.callbacks  # noqa: F401 - コールバック登録
 
@@ -93,12 +93,14 @@ application.clientside_callback(
 )
 
 # --- 画面スニップ (getDisplayMedia → 範囲選択 → ocr-image-store) ---
-application.clientside_callback(
-    "dash_clientside.sim.snipScreen",
-    Output("ocr-image-store", "data"),
-    Input("ocr-snip-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
+# OCR はローカル専用。外部公開時 (ENABLE_OCR=false) は登録しない。
+if OCR_ENABLED:
+    application.clientside_callback(
+        "dash_clientside.sim.snipScreen",
+        Output("ocr-image-store", "data"),
+        Input("ocr-snip-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
 
 # --- ページ切替 (シミュレータ / 多段リスタ解析) ---
 application.clientside_callback(

@@ -3,6 +3,8 @@ from pathlib import Path
 
 from dash import html, dcc
 
+from app import OCR_ENABLED
+
 # PyInstaller バンドル時は _MEIPASS、通常時はプロジェクトルート
 if getattr(sys, "frozen", False):
     _BASE_DIR = Path(sys._MEIPASS)
@@ -467,7 +469,8 @@ def _sidebar() -> html.Div:
         [
             # 積or和モデル → スクショ → インポートエクスポート → その他
             hp_section,
-            _ocr_panel(),
+            # OCR (スクショ→カード) はローカル専用。外部公開時は非表示。
+            *([_ocr_panel()] if OCR_ENABLED else []),
             _text_panel(),
             _io_panel(),
             calc_section,

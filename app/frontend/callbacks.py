@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from dash import callback, Input, Output, State, ALL, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
+from app import OCR_ENABLED
 from app.backend import ocr, restart_cos
 from app.backend.cos import HPParams, build_hit_mixtures, y_mixture
 from app.frontend.layout import make_damage_card
@@ -119,60 +120,63 @@ def update_cards(
 
 # ---------------------------------------------------------------------------
 # スクリーンショット OCR → カード自動生成 (サーバーサイド)
+# OCR はローカル専用機能。外部公開時 (ENABLE_OCR=false) はコールバック自体を
+# 登録しないため、Vision API へのアクセス経路が存在しなくなる。
 # ---------------------------------------------------------------------------
-@callback(
-    Output("cards-container", "children", allow_duplicate=True),
-    Output("card-indices", "data", allow_duplicate=True),
-    Output("next-index", "data", allow_duplicate=True),
-    Output("sorted-indices", "data", allow_duplicate=True),
-    Output("ocr-status", "children"),
-    Output("hp-mode", "value", allow_duplicate=True),
-    Input("ocr-upload", "contents"),
-    Input("ocr-image-store", "data"),
-    State("cards-container", "children"),
-    State("card-indices", "data"),
-    State("next-index", "data"),
-    prevent_initial_call=True,
-)
-def ocr_add_cards(upload_contents, snip_data, children, indices, next_idx):
-    """アップロード / スニップ画像を OCR し、抽出カードを追加する。"""
-    trigger = ctx.triggered_id
-    image = upload_contents if trigger == "ocr-upload" else snip_data
-    if not image:
-        raise PreventUpdate
-
-    no_change = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
-
-    try:
-        result = ocr.cards_from_image(image)
-    except ocr.OcrError as exc:
-        return (*no_change, f"⚠ {exc}", dash.no_update)
-    except Exception as exc:  # noqa: BLE001 - 予期せぬ失敗もユーザーに表示
-        return (*no_change, f"⚠ 解析に失敗しました: {exc}", dash.no_update)
-
-    parsed = result["cards"]
-    if not parsed:
-        return (*no_change, "⚠ カードを検出できませんでした。画像を確認してください。", dash.no_update)
-
-    for card in parsed:
-        children.append(make_damage_card(next_idx, params=card["params"], memo=card["memo"]))
-        indices.append(next_idx)
-        next_idx += 1
-
-    msgs = [f"✅ {len(parsed)} 枚のカードを追加しました。"]
-    hp_mode = dash.no_update
-    if result.get("hp_dependent"):
-        hp_mode = "on"
-        msgs.append("HP依存を検出 → サイドバーのHP依存モードをONにしました。")
-
-    return (
-        children,
-        indices,
-        next_idx,
-        _order_from_children(children),
-        " ".join(msgs),
-        hp_mode,
+if OCR_ENABLED:
+    @callback(
+        Output("cards-container", "children", allow_duplicate=True),
+        Output("card-indices", "data", allow_duplicate=True),
+        Output("next-index", "data", allow_duplicate=True),
+        Output("sorted-indices", "data", allow_duplicate=True),
+        Output("ocr-status", "children"),
+        Output("hp-mode", "value", allow_duplicate=True),
+        Input("ocr-upload", "contents"),
+        Input("ocr-image-store", "data"),
+        State("cards-container", "children"),
+        State("card-indices", "data"),
+        State("next-index", "data"),
+        prevent_initial_call=True,
     )
+    def ocr_add_cards(upload_contents, snip_data, children, indices, next_idx):
+        """アップロード / スニップ画像を OCR し、抽出カードを追加する。"""
+        trigger = ctx.triggered_id
+        image = upload_contents if trigger == "ocr-upload" else snip_data
+        if not image:
+            raise PreventUpdate
+
+        no_change = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
+
+        try:
+            result = ocr.cards_from_image(image)
+        except ocr.OcrError as exc:
+            return (*no_change, f"⚠ {exc}", dash.no_update)
+        except Exception as exc:  # noqa: BLE001 - 予期せぬ失敗もユーザーに表示
+            return (*no_change, f"⚠ 解析に失敗しました: {exc}", dash.no_update)
+
+        parsed = result["cards"]
+        if not parsed:
+            return (*no_change, "⚠ カードを検出できませんでした。画像を確認してください。", dash.no_update)
+
+        for card in parsed:
+            children.append(make_damage_card(next_idx, params=card["params"], memo=card["memo"]))
+            indices.append(next_idx)
+            next_idx += 1
+
+        msgs = [f"✅ {len(parsed)} 枚のカードを追加しました。"]
+        hp_mode = dash.no_update
+        if result.get("hp_dependent"):
+            hp_mode = "on"
+            msgs.append("HP依存を検出 → サイドバーのHP依存モードをONにしました。")
+
+        return (
+            children,
+            indices,
+            next_idx,
+            _order_from_children(children),
+            " ".join(msgs),
+            hp_mode,
+        )
 
 
 # ---------------------------------------------------------------------------
