@@ -134,3 +134,37 @@ table.restart-cards th, table.restart-cards td {
   border: 1px solid #e0b0b0; padding: 4px 8px; font-size: 0.86rem;
 }
 table.restart-cards th { background: #ffe0e0; }
+
+/* --- スキル順探索: 手順ステップ行 --- */
+#so-steps-container { counter-reset: so-step; }
+.so-step-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.so-step-row::before {
+  counter-increment: so-step;
+  content: counter(so-step) ".";
+  width: 26px;
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: bold;
+  font-size: 0.9rem;
+  color: #666;
+}
+.so-mini-btn {
+  background: #f4f4f4;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.so-mini-btn:hover { background: #e8e8e8; }
+
+/* 手順行のドロップダウンは幅が狭いので内部の余白を詰める
+   (Dash 4 の dcc.Dropdown は左右 12px + gap 8px で値の表示域が細るため) */
+.so-step-row .dash-dropdown-trigger { padding: 0 8px; }
+.so-step-row .dash-dropdown-grid-container { gap: 4px; }

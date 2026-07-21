@@ -621,6 +621,270 @@ def _restart_page() -> html.Div:
     )
 
 
+# ---------------------------------------------------------------------------
+# スキル順探索ページ
+# ---------------------------------------------------------------------------
+SO_N_SKILLS = 6
+_SO_DEFAULT_NAMES = ["", "", "", "", "", ""]
+
+
+def so_skill_options(names: list, copiers: set) -> list:
+    """手順ステップの「使うカード」ドロップダウン選択肢。
+
+    value 形式: "any" / "n{i}" (スキルiの元カード) / "c{i}" (スキルiのコピー)。
+    名前を後から変えても添字参照なので選択は維持される。
+    """
+    def nm(i):
+        return (names[i] or "").strip() or f"カード{i + 1}"
+
+    opts = [{"label": "指定なし(何でも)", "value": "any"}]
+    for i in range(len(names)):
+        suffix = " ※複製スキル" if i in copiers else ""
+        opts.append({"label": nm(i) + suffix, "value": f"n{i}"})
+    if copiers:
+        for i in range(len(names)):
+            if i not in copiers:
+                opts.append({"label": f"{nm(i)}(コピー)", "value": f"c{i}"})
+    return opts
+
+
+def so_target_options(names: list, copiers: set) -> list:
+    """複製対象ドロップダウンの選択肢(複製キャラ自身は対象外)。"""
+    return [
+        {"label": (names[i] or "").strip() or f"カード{i + 1}", "value": str(i)}
+        for i in range(len(names)) if i not in copiers
+    ]
+
+
+def make_so_step(index: int, skill_options: list, target_options: list, *,
+                 skill=None, target=None, slot: str = "any",
+                 draw: bool = False, memo: str = "") -> html.Div:
+    """手順(PLAN)の1ステップ行を生成する。行の並び順 = 手順の順番。
+
+    skill が None(未選択)の行は実行時に無視される。
+    """
+    return html.Div(
+        [
+            dcc.Dropdown(
+                id={"type": "so-step-skill", "index": index},
+                options=skill_options,
+                value=skill,
+                placeholder="生徒を選択",
+                clearable=False,
+                style={"width": "160px", "flexShrink": "0"},
+            ),
+            # 複製対象: 複製スキルを選択した行でのみコールバックが表示する
+            dcc.Dropdown(
+                id={"type": "so-step-target", "index": index},
+                options=target_options,
+                value=target,
+                placeholder="複製対象",
+                clearable=True,
+                style={"width": "130px", "flexShrink": "0", "display": "none"},
+            ),
+            html.Span("枠", style={"fontSize": "0.85rem", "flexShrink": "0",
+                                   "marginLeft": "2px"}),
+            dcc.Dropdown(
+                id={"type": "so-step-slot", "index": index},
+                options=[
+                    {"label": "任意", "value": "any"},
+                    {"label": "左", "value": "1"},
+                    {"label": "中", "value": "2"},
+                    {"label": "右", "value": "3"},
+                ],
+                value=slot,
+                clearable=False,
+                searchable=False,
+                style={"width": "80px", "flexShrink": "0"},
+            ),
+            dcc.Checklist(
+                id={"type": "so-step-draw", "index": index},
+                options=[{"label": "ドロー", "value": "draw"}],
+                value=["draw"] if draw else [],
+                style={"whiteSpace": "nowrap", "fontSize": "0.85rem"},
+            ),
+            dcc.Input(
+                id={"type": "so-step-memo", "index": index},
+                type="text",
+                value=memo,
+                placeholder="メモ",
+                style={"flex": "1", "minWidth": "80px",
+                       "fontSize": "0.85rem"},
+            ),
+            html.Button("✕", id={"type": "so-step-remove", "index": index},
+                        n_clicks=0, title="このステップを削除",
+                        className="so-mini-btn"),
+        ],
+        id={"type": "so-step", "index": index},
+        className="so-step-row",
+    )
+
+
+def make_so_constraint(index: int, *, ctype: str = "diff", steps: str = "") -> html.Div:
+    """手順間制約の1行を生成する。"""
+    return html.Div(
+        [
+            dcc.Dropdown(
+                id={"type": "so-con-type", "index": index},
+                options=[
+                    {"label": "別スロットにする", "value": "diff"},
+                    {"label": "同じスロットにする", "value": "same"},
+                ],
+                value=ctype,
+                clearable=False,
+                style={"width": "190px"},
+            ),
+            html.Span("対象手順:", style={"fontSize": "0.85rem", "whiteSpace": "nowrap"}),
+            dcc.Input(
+                id={"type": "so-con-steps", "index": index},
+                type="text",
+                value=steps,
+                placeholder="手順番号をカンマ区切り 例: 1,3",
+                style={"flex": "1", "minWidth": "140px"},
+            ),
+            html.Button("✕", id={"type": "so-con-remove", "index": index},
+                        n_clicks=0, title="この制約を削除", className="so-mini-btn"),
+        ],
+        id={"type": "so-con", "index": index},
+        style={"display": "flex", "gap": "8px", "alignItems": "center",
+               "marginBottom": "6px"},
+    )
+
+
+def _skill_order_page() -> html.Div:
+    """スキル順(開始スキル設定)探索ページ。"""
+    initial_skill_opts = so_skill_options(_SO_DEFAULT_NAMES, set())
+    initial_target_opts = so_target_options(_SO_DEFAULT_NAMES, set())
+
+    skill_rows = []
+    for i in range(SO_N_SKILLS):
+        skill_rows.append(
+            html.Div(
+                [
+                    html.Span(f"カード{i + 1}", style={"width": "62px", "flexShrink": "0",
+                                                      "fontSize": "0.85rem"}),
+                    dcc.Input(
+                        id={"type": "so-name", "index": i},
+                        type="text",
+                        value=_SO_DEFAULT_NAMES[i],
+                        placeholder=f"生徒名{i + 1}",
+                        maxLength=12,
+                        style={"width": "110px", "flexShrink": "0"},
+                    ),
+                    dcc.Checklist(
+                        id={"type": "so-copier", "index": i},
+                        options=[{"label": "複製スキル", "value": "copier"}],
+                        value=[],
+                        style={"whiteSpace": "nowrap", "fontSize": "0.82rem"},
+                    ),
+                ],
+                style={"display": "flex", "gap": "8px", "alignItems": "center",
+                       "width": "calc(33.3% - 9px)", "minWidth": "240px"},
+            )
+        )
+
+    return html.Div(
+        [
+            html.H3("スキル順探索", style={"marginTop": "0"}),
+            html.P(
+                "使いたいスキル順(手順)を満たす「開始スキル設定(手札3枚+山札3枚の初期配置)」"
+                "を全探索します。カードは6枚固定で、カードを使うと山札の一番下へ行き、"
+                "山札の一番上がドローされます。",
+                style={"fontSize": "0.88rem", "color": "#555"},
+            ),
+            # --- カード(スキル)設定 ---
+            html.Div(
+                [
+                    html.Strong("カード設定(6枚)"),
+                    html.Div(
+                        "キャラ名を入力してください。複製スキル持ち(対象を指定して撃つと"
+                        "自分のカードが対象のコピーに変化するキャラ)は「複製スキル」に"
+                        "チェックを入れます。",
+                        style={"fontSize": "0.8rem", "color": "#888", "margin": "4px 0 8px"},
+                    ),
+                    html.Div(skill_rows,
+                             style={"display": "flex", "flexWrap": "wrap", "gap": "6px 12px"}),
+                ],
+                style={"border": "1px solid #ddd", "borderRadius": "8px",
+                       "padding": "12px", "marginBottom": "14px", "background": "#f7fbff"},
+            ),
+            # --- 手順 (PLAN) ---
+            html.Div(
+                [
+                    html.Strong("手順(使いたいスキル順)"),
+                    html.Div(
+                        [
+                            "上から順にスキルを使います。生徒を選ぶと自動で次の行が"
+                            "追加されます。未選択(空)の行は無視されます。"
+                            "「指定なし」は繋ぎの1枚"
+                            "(何を使ってもよい。ただし複製スキルの元カードは複製対象を"
+                            "決められないため使いません)。",
+                            html.Br(),
+                            "複製スキルのカードを選んだ場合は「複製対象」を指定してください。"
+                            "撃つとその場でカードが「対象(コピー)」に変化します"
+                            "(山札への移動・ドローなし)。コピーを使う手順は"
+                            "「◯◯(コピー)」を選びます。使用後はカードが複製キャラに戻って"
+                            "山札の一番下へ行きます。",
+                            html.Br(),
+                            html.Span("ドロー", style={"fontWeight": "bold"}),
+                            " = そのステップでスキルカードのドローが発生する場合にチェック。"
+                            "使用カードが山札へ行った後、そのスキルの元カードが山札にあれば"
+                            "同じスロットに引き抜かれます(無ければ通常ドロー)。",
+                        ],
+                        style={"fontSize": "0.8rem", "color": "#888", "margin": "4px 0 8px"},
+                    ),
+                    html.Div(id="so-steps-container",
+                             children=[make_so_step(0, initial_skill_opts, initial_target_opts)]),
+                    html.Button("+ ステップ追加", id="so-add-step-btn", n_clicks=0,
+                                style={"marginTop": "6px"}),
+                ],
+                style={"border": "1px solid #ddd", "borderRadius": "8px",
+                       "padding": "12px", "marginBottom": "14px", "background": "#fffdf5"},
+            ),
+            # --- 制約 ---
+            html.Div(
+                [
+                    html.Strong("手順間の制約(任意)"),
+                    html.Div(
+                        "「1,3」のように手順番号(1始まり)をカンマ区切りで指定すると、"
+                        "その手順どうしを別スロット / 同じスロットに限定できます。"
+                        "裏にあるスキルの後掛けを回避したい場合などに設定してください。",
+                        style={"fontSize": "0.8rem", "color": "#888", "margin": "4px 0 8px"},
+                    ),
+                    html.Div(id="so-cons-container", children=[]),
+                    html.Button("+ 制約追加", id="so-add-con-btn", n_clicks=0,
+                                style={"marginTop": "6px"}),
+                ],
+                style={"border": "1px solid #ddd", "borderRadius": "8px",
+                       "padding": "12px", "marginBottom": "14px", "background": "#f5fff7"},
+            ),
+            # --- 実行 ---
+            html.Div(
+                [
+                    html.Label("表示件数上限", style=LABEL_STYLE),
+                    dcc.Input(id="so-limit", type="number", value=60, min=1, max=1000,
+                              style={"width": "90px", "margin": "0 16px 0 8px"}),
+                    html.Button("探索実行", id="so-run-btn", n_clicks=0,
+                                style={"background": "#d63031", "color": "white",
+                                       "border": "none", "borderRadius": "4px",
+                                       "padding": "8px 18px", "cursor": "pointer",
+                                       "fontWeight": "bold"}),
+                ],
+                style={"display": "flex", "alignItems": "center", "marginBottom": "12px"},
+            ),
+            dcc.Loading(
+                html.Div(id="so-results"),
+                type="circle", color="#d63031",
+            ),
+            # 手順行の表示順 (step index のリスト)
+            dcc.Store(id="so-step-order", data=[0]),
+            dcc.Store(id="so-next-step", data=1),
+            dcc.Store(id="so-next-con", data=0),
+        ],
+        style={"maxWidth": "900px"},
+    )
+
+
 def _nav_bar() -> html.Div:
     # 初期表示は「シミュレータ」ページ (= active)
     return html.Div(
@@ -628,6 +892,8 @@ def _nav_bar() -> html.Div:
             html.Button("📊 シミュレータ", id="nav-sim", n_clicks=0,
                         className="nav-btn active"),
             html.Button("🎯 足切りライン最適化", id="nav-restart", n_clicks=0,
+                        className="nav-btn", style={"marginLeft": "6px"}),
+            html.Button("🃏 スキル順探索", id="nav-skill", n_clicks=0,
                         className="nav-btn", style={"marginLeft": "6px"}),
         ],
         style={"display": "flex", "marginBottom": "14px", "gap": "0",
@@ -821,6 +1087,7 @@ def create_layout() -> html.Div:
                 id="page-sim",
             ),
             html.Div(_restart_page(), id="page-restart", style={"display": "none"}),
+            html.Div(_skill_order_page(), id="page-skill", style={"display": "none"}),
             # 非表示 Store 群
             dcc.Store(id="drag-order", data=""),
             dcc.Store(id="card-indices", data=[0]),

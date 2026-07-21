@@ -3,13 +3,20 @@ import json
 
 import dash
 import plotly.graph_objects as go
-from dash import callback, Input, Output, State, ALL, ctx, dcc, html
+from dash import callback, Input, Output, State, ALL, MATCH, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from app import OCR_ENABLED
-from app.backend import ocr, restart_cos
+from app.backend import ocr, restart_cos, skill_order
 from app.backend.cos import HPParams, build_hit_mixtures, y_mixture
-from app.frontend.layout import make_damage_card
+from app.frontend.layout import (
+    SO_N_SKILLS,
+    make_damage_card,
+    make_so_constraint,
+    make_so_step,
+    so_skill_options,
+    so_target_options,
+)
 
 # エクスポート/インポートで扱うカードパラメータ項目とフォーマット版。
 _CARD_PARAMS = ["crit_min", "crit_max", "normal_min", "normal_max",
@@ -982,3 +989,368 @@ def update_restart_interactive(slider_values, slider_ids, cfg):
         ),
     ])
     return fig, summary
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: ヘルパー
+# ---------------------------------------------------------------------------
+def _so_names_copiers(name_values, name_ids, copier_values, copier_ids):
+    """カード名リスト(空欄はデフォルト名で補完)と複製キャラ添字集合を返す。"""
+    names = [""] * SO_N_SKILLS
+    for v, nid in zip(name_values, name_ids):
+        names[nid["index"]] = (v or "").strip()
+    copiers = {cid["index"] for v, cid in zip(copier_values, copier_ids) if v}
+    disp_names = [nm or f"カード{i + 1}" for i, nm in enumerate(names)]
+    return names, disp_names, copiers
+
+
+def _so_step_order_from(children):
+    """手順コンテナ children の並び順から step index のリストを返す。"""
+    order = []
+    for c in children:
+        if isinstance(c, dict):
+            cid = c.get("props", {}).get("id")
+        else:
+            cid = getattr(c, "id", None)
+        if isinstance(cid, dict) and cid.get("type") == "so-step":
+            order.append(cid["index"])
+    return order
+
+
+def _so_step_desc(step, names):
+    """手順1ステップの表示文字列。"""
+    if step.skill is None:
+        s = "＊"
+    elif step.use_copy:
+        s = f"{names[step.skill]}(コピー)"
+    else:
+        s = names[step.skill]
+        if step.copy_target is not None:
+            s += f"→{names[step.copy_target]}(コピー)"
+    if step.slot is not None:
+        s += f"@{skill_order.SLOT_LABELS[step.slot - 1]}"
+    if step.draw:
+        s += "+ドロー"
+    return s
+
+
+def _so_error(msg):
+    return html.Div(f"⚠ {msg}", style={"color": "#d63031", "fontWeight": "bold"})
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: 手順ステップの追加 / 削除 / 生徒選択時の自動行追加
+# ---------------------------------------------------------------------------
+@callback(
+    Output("so-steps-container", "children"),
+    Output("so-step-order", "data"),
+    Output("so-next-step", "data"),
+    Input("so-add-step-btn", "n_clicks"),
+    Input({"type": "so-step-remove", "index": ALL}, "n_clicks"),
+    Input({"type": "so-step-skill", "index": ALL}, "value"),
+    State("so-steps-container", "children"),
+    State("so-next-step", "data"),
+    State({"type": "so-step-skill", "index": ALL}, "id"),
+    State({"type": "so-name", "index": ALL}, "value"),
+    State({"type": "so-name", "index": ALL}, "id"),
+    State({"type": "so-copier", "index": ALL}, "value"),
+    State({"type": "so-copier", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def so_update_steps(_add, _rm, skill_values, children, next_idx, skill_ids,
+                    name_values, name_ids, copier_values, copier_ids):
+    trigger = ctx.triggered_id
+    children = children or []
+
+    def new_step():
+        _, disp_names, copiers = _so_names_copiers(
+            name_values, name_ids, copier_values, copier_ids)
+        return make_so_step(
+            next_idx,
+            so_skill_options(disp_names, copiers),
+            so_target_options(disp_names, copiers),
+        )
+
+    if trigger == "so-add-step-btn":
+        children.append(new_step())
+        return children, _so_step_order_from(children), next_idx + 1
+
+    if not (isinstance(trigger, dict) and _triggered_clicked()):
+        raise PreventUpdate
+
+    ttype = trigger.get("type")
+    tidx = trigger.get("index")
+    order = _so_step_order_from(children)
+    if tidx not in order:
+        raise PreventUpdate
+
+    if ttype == "so-step-remove":
+        if len(order) <= 1:
+            raise PreventUpdate
+        children = [c for c in children
+                    if _so_step_order_from([c]) != [tidx]]
+        return children, _so_step_order_from(children), next_idx
+
+    if ttype == "so-step-skill":
+        # 生徒を選択したら、最後の行が埋まっている場合に空の行を自動追加する
+        skill_by = {i["index"]: v for v, i in zip(skill_values, skill_ids)}
+        if skill_by.get(order[-1]):
+            children.append(new_step())
+            return children, _so_step_order_from(children), next_idx + 1
+        raise PreventUpdate
+
+    raise PreventUpdate
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: 複製スキルを選択した行だけ「複製対象」を表示する
+# ---------------------------------------------------------------------------
+_SO_TARGET_STYLE = {"width": "130px", "flexShrink": "0"}
+
+
+@callback(
+    Output({"type": "so-step-target", "index": MATCH}, "style"),
+    Input({"type": "so-step-skill", "index": MATCH}, "value"),
+    Input({"type": "so-copier", "index": ALL}, "value"),
+    State({"type": "so-copier", "index": ALL}, "id"),
+)
+def so_toggle_target(skill_value, copier_values, copier_ids):
+    copiers = {cid["index"] for v, cid in zip(copier_values, copier_ids) if v}
+    if (skill_value and skill_value.startswith("n")
+            and int(skill_value[1:]) in copiers):
+        return _SO_TARGET_STYLE
+    return {**_SO_TARGET_STYLE, "display": "none"}
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: カード名 / 複製フラグ変更 → ドロップダウン選択肢を更新
+# ---------------------------------------------------------------------------
+@callback(
+    Output({"type": "so-step-skill", "index": ALL}, "options"),
+    Output({"type": "so-step-target", "index": ALL}, "options"),
+    Input({"type": "so-name", "index": ALL}, "value"),
+    Input({"type": "so-copier", "index": ALL}, "value"),
+    State({"type": "so-name", "index": ALL}, "id"),
+    State({"type": "so-copier", "index": ALL}, "id"),
+    State({"type": "so-step-skill", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def so_refresh_options(name_values, copier_values, name_ids, copier_ids,
+                       skill_dd_ids):
+    _, disp_names, copiers = _so_names_copiers(
+        name_values, name_ids, copier_values, copier_ids)
+    n = len(skill_dd_ids)
+    return ([so_skill_options(disp_names, copiers)] * n,
+            [so_target_options(disp_names, copiers)] * n)
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: 制約行の追加 / 削除
+# ---------------------------------------------------------------------------
+@callback(
+    Output("so-cons-container", "children"),
+    Output("so-next-con", "data"),
+    Input("so-add-con-btn", "n_clicks"),
+    Input({"type": "so-con-remove", "index": ALL}, "n_clicks"),
+    State("so-cons-container", "children"),
+    State("so-next-con", "data"),
+    prevent_initial_call=True,
+)
+def so_update_constraints(_add, _rm, children, next_idx):
+    trigger = ctx.triggered_id
+    children = children or []
+
+    if trigger == "so-add-con-btn":
+        children.append(make_so_constraint(next_idx))
+        return children, next_idx + 1
+
+    if isinstance(trigger, dict) and trigger.get("type") == "so-con-remove":
+        if not _triggered_clicked():
+            raise PreventUpdate
+        rm = trigger["index"]
+        children = [
+            c for c in children
+            if not (isinstance(c, dict)
+                    and c.get("props", {}).get("id", {}).get("type") == "so-con"
+                    and c["props"]["id"].get("index") == rm)
+        ]
+        return children, next_idx
+
+    raise PreventUpdate
+
+
+# ---------------------------------------------------------------------------
+# スキル順探索: 実行
+# ---------------------------------------------------------------------------
+@callback(
+    Output("so-results", "children"),
+    Input("so-run-btn", "n_clicks"),
+    State("so-step-order", "data"),
+    State({"type": "so-name", "index": ALL}, "value"),
+    State({"type": "so-name", "index": ALL}, "id"),
+    State({"type": "so-copier", "index": ALL}, "value"),
+    State({"type": "so-copier", "index": ALL}, "id"),
+    State({"type": "so-step-skill", "index": ALL}, "value"),
+    State({"type": "so-step-skill", "index": ALL}, "id"),
+    State({"type": "so-step-target", "index": ALL}, "value"),
+    State({"type": "so-step-target", "index": ALL}, "id"),
+    State({"type": "so-step-slot", "index": ALL}, "value"),
+    State({"type": "so-step-slot", "index": ALL}, "id"),
+    State({"type": "so-step-draw", "index": ALL}, "value"),
+    State({"type": "so-step-draw", "index": ALL}, "id"),
+    State({"type": "so-step-memo", "index": ALL}, "value"),
+    State({"type": "so-step-memo", "index": ALL}, "id"),
+    State({"type": "so-con-type", "index": ALL}, "value"),
+    State({"type": "so-con-type", "index": ALL}, "id"),
+    State({"type": "so-con-steps", "index": ALL}, "value"),
+    State({"type": "so-con-steps", "index": ALL}, "id"),
+    State("so-limit", "value"),
+    prevent_initial_call=True,
+)
+def so_run(_n, step_order,
+           name_values, name_ids, copier_values, copier_ids,
+           skill_values, skill_ids, target_values, target_ids,
+           slot_values, slot_ids, draw_values, draw_ids,
+           memo_values, memo_ids,
+           con_types, con_type_ids, con_steps, con_step_ids,
+           limit):
+    _, disp_names, copiers = _so_names_copiers(
+        name_values, name_ids, copier_values, copier_ids)
+
+    # ステップ属性を index → 値 の辞書に集約し、表示順 (step_order) で組み立てる
+    skill_by = {i["index"]: v for v, i in zip(skill_values, skill_ids)}
+    target_by = {i["index"]: v for v, i in zip(target_values, target_ids)}
+    slot_by = {i["index"]: v for v, i in zip(slot_values, slot_ids)}
+    draw_by = {i["index"]: bool(v) for v, i in zip(draw_values, draw_ids)}
+    memo_by = {i["index"]: (v or "").strip()
+               for v, i in zip(memo_values, memo_ids)}
+
+    # 未選択(空)の手順は無視する
+    step_order = [i for i in (step_order or [])
+                  if i in skill_by and skill_by.get(i)]
+    if not step_order:
+        return _so_error("手順がありません。手順で生徒を選択してください。")
+
+    plan = []
+    memos = []
+    for pos, sidx in enumerate(step_order, start=1):
+        raw = skill_by[sidx]
+        memos.append(memo_by.get(sidx, ""))
+        slot_raw = slot_by.get(sidx) or "any"
+        slot = int(slot_raw) if slot_raw != "any" else None
+        draw = draw_by.get(sidx, False)
+
+        if raw == "any":
+            plan.append(skill_order.Step(None, slot=slot, draw=draw))
+            continue
+
+        use_copy = raw.startswith("c")
+        skill = int(raw[1:])
+        if use_copy:
+            if skill in copiers:
+                return _so_error(
+                    f"手順{pos}: 複製スキル自身のコピーは指定できません。")
+            plan.append(skill_order.Step(
+                skill, use_copy=True, slot=slot, draw=draw))
+            continue
+
+        target = None
+        if skill in copiers:
+            traw = target_by.get(sidx)
+            if traw is None or traw == "":
+                return _so_error(
+                    f"手順{pos}: {disp_names[skill]} は複製スキルです。"
+                    "複製対象を選択してください。")
+            target = int(traw)
+            if target == skill or target in copiers:
+                return _so_error(f"手順{pos}: 複製対象が不正です。")
+        plan.append(skill_order.Step(
+            skill, copy_target=target, slot=slot, draw=draw))
+
+    # 制約の組み立て
+    con_type_by = {i["index"]: v for v, i in zip(con_types, con_type_ids)}
+    con_steps_by = {i["index"]: v for v, i in zip(con_steps, con_step_ids)}
+    constraints = []
+    for cidx, ctype in con_type_by.items():
+        text = (con_steps_by.get(cidx) or "").strip()
+        if not text:
+            continue
+        try:
+            nums = [int(x) for x in text.replace("、", ",").split(",") if x.strip()]
+        except ValueError:
+            return _so_error(f"制約「{text}」: 手順番号はカンマ区切りの数値で"
+                             "指定してください(例: 1,3)。")
+        if len(set(nums)) < 2:
+            return _so_error(f"制約「{text}」: 手順番号を2つ以上指定してください。")
+        bad = [x for x in nums if not (1 <= x <= len(plan))]
+        if bad:
+            return _so_error(f"制約「{text}」: 手順番号 {bad} が範囲外です"
+                             f"(1〜{len(plan)})。")
+        idx0 = [x - 1 for x in nums]
+        if ctype == "same":
+            constraints.append(skill_order.same_slot(*idx0))
+        else:
+            constraints.append(skill_order.different_slots(*idx0))
+
+    limit = max(1, min(int(limit or 60), 1000))
+    try:
+        results, truncated = skill_order.solve(
+            SO_N_SKILLS, copiers, plan, constraints, max_results=20_000)
+    except skill_order.SearchBudgetExceeded:
+        return _so_error(
+            "探索の組合せが多すぎて打ち切りました。「指定なし」ステップを減らすか、"
+            "スロット指定を追加して絞り込んでください。")
+
+    plan_str = " → ".join(
+        _so_step_desc(s, disp_names) + (f"「{m}」" if m else "")
+        for s, m in zip(plan, memos))
+    header = [
+        html.Div([html.Strong("手順: "), plan_str],
+                 style={"fontSize": "0.88rem", "marginBottom": "4px"}),
+        html.Div(
+            [
+                html.Strong(f"解の数: {len(results)}{'+' if truncated else ''}"),
+                html.Span(
+                    f"(初期配置 {len({r[0] for r in results})} 通り"
+                    f"{'+' if truncated else ''})",
+                    style={"color": "#666", "marginLeft": "6px",
+                           "fontSize": "0.85rem"}),
+            ],
+            style={"marginBottom": "10px"},
+        ),
+    ]
+    if not results:
+        header.append(html.Div(
+            "条件を満たす初期配置は見つかりませんでした。",
+            style={"color": "#d63031"}))
+        return html.Div(header)
+
+    rows = []
+    for layout, trace in results[:limit]:
+        # 開始スキル設定: 1,2,3=手札(左から) / 4=山札上 / 5=山札中
+        # (6枚目=山札下は残りの1枚で自動的に決まるため表示しない)
+        order_parts = []
+        for pos, i in enumerate(layout[:5], start=1):
+            order_parts.append(html.Span([
+                html.Span(f"{pos} ", style={"color": "#4a90d9",
+                                            "fontWeight": "bold"}),
+                html.Strong(disp_names[i]),
+            ], style={"marginRight": "12px", "whiteSpace": "nowrap"}))
+        seq = " ".join(skill_order.trace_entry_label(e, disp_names)
+                       for e in trace)
+        rows.append(html.Div(
+            [
+                html.Div(order_parts),
+                html.Div(f"使用順: {seq}",
+                         style={"fontSize": "0.85rem", "color": "#555",
+                                "marginTop": "2px"}),
+            ],
+            style={"border": "1px solid #e0e0e0", "borderRadius": "6px",
+                   "padding": "8px 10px", "marginBottom": "6px",
+                   "background": "#fafafa"},
+        ))
+    if len(results) > limit:
+        rows.append(html.Div(
+            f"... 他 {len(results) - limit} 件(表示件数上限)",
+            style={"color": "#888", "fontSize": "0.85rem"}))
+    return html.Div(header + rows)

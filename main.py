@@ -102,27 +102,34 @@ if OCR_ENABLED:
         prevent_initial_call=True,
     )
 
-# --- ページ切替 (シミュレータ / 多段リスタ解析) ---
+# --- ページ切替 (シミュレータ / 多段リスタ解析 / スキル順探索) ---
 application.clientside_callback(
     """
-    function(nsim, nrest) {
+    function(nsim, nrest, nskill) {
         var ctx = window.dash_clientside.callback_context;
         var trig = (ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id : '';
-        var showRestart = trig.indexOf('nav-restart') === 0;
+        var page = 'sim';
+        if (trig.indexOf('nav-restart') === 0) page = 'restart';
+        else if (trig.indexOf('nav-skill') === 0) page = 'skill';
         return [
-            {display: showRestart ? 'none' : 'block'},
-            {display: showRestart ? 'block' : 'none'},
-            showRestart ? 'nav-btn' : 'nav-btn active',
-            showRestart ? 'nav-btn active' : 'nav-btn'
+            {display: page === 'sim' ? 'block' : 'none'},
+            {display: page === 'restart' ? 'block' : 'none'},
+            {display: page === 'skill' ? 'block' : 'none'},
+            page === 'sim' ? 'nav-btn active' : 'nav-btn',
+            page === 'restart' ? 'nav-btn active' : 'nav-btn',
+            page === 'skill' ? 'nav-btn active' : 'nav-btn'
         ];
     }
     """,
     Output("page-sim", "style"),
     Output("page-restart", "style"),
+    Output("page-skill", "style"),
     Output("nav-sim", "className"),
     Output("nav-restart", "className"),
+    Output("nav-skill", "className"),
     Input("nav-sim", "n_clicks"),
     Input("nav-restart", "n_clicks"),
+    Input("nav-skill", "n_clicks"),
     prevent_initial_call=True,
 )
 
