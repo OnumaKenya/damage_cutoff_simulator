@@ -671,6 +671,7 @@ def make_so_step(index: int, skill_options: list, target_options: list, *,
                 value=skill,
                 placeholder="生徒を選択",
                 clearable=False,
+                className="so-dd-skill",
                 style={"width": "160px", "flexShrink": "0"},
             ),
             # 複製対象: 複製スキルを選択した行でのみコールバックが表示する
@@ -785,7 +786,7 @@ def _skill_order_page() -> html.Div:
 
     return html.Div(
         [
-            html.H3("スキル順探索", style={"marginTop": "0"}),
+            html.H3("スキル順探索(β版)", style={"marginTop": "0"}),
             html.P(
                 "使いたいスキル順(手順)を満たす「開始スキル設定(手札3枚+山札3枚の初期配置)」"
                 "を全探索します。カードは6枚固定で、カードを使うと山札の一番下へ行き、"
@@ -893,9 +894,10 @@ def _nav_bar() -> html.Div:
                         className="nav-btn active"),
             html.Button("🎯 足切りライン最適化", id="nav-restart", n_clicks=0,
                         className="nav-btn", style={"marginLeft": "6px"}),
-            html.Button("🃏 スキル順探索", id="nav-skill", n_clicks=0,
+            html.Button("🃏 スキル順探索(β版)", id="nav-skill", n_clicks=0,
                         className="nav-btn", style={"marginLeft": "6px"}),
         ],
+        className="nav-bar",
         style={"display": "flex", "marginBottom": "14px", "gap": "0",
                "borderBottom": "2px solid #d63031", "paddingBottom": "0"},
     )
@@ -906,7 +908,7 @@ def create_layout() -> html.Div:
         [
             html.Div(
                 [
-                    html.H1("ブルアカダメージ足切り最適化(β版)", style={"marginBottom": "0"}),
+                    html.H1("ブルアカダメージ足切り最適化", style={"marginBottom": "0"}),
                     html.Div(
                         [
                             html.Button(
@@ -947,7 +949,9 @@ def create_layout() -> html.Div:
                         style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "gap": "12px"},
                     ),
                 ],
-                style={"display": "flex", "alignItems": "center", "marginBottom": "16px"},
+                className="app-header",
+                style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                       "gap": "8px", "marginBottom": "16px"},
             ),
             # マニュアルモーダル
             html.Div(
@@ -1082,6 +1086,7 @@ def create_layout() -> html.Div:
                         style={"flex": "1", "minWidth": "0"},
                     ),
                 ],
+                className="main-flex",
                 style={"display": "flex", "gap": "20px", "alignItems": "flex-start"},
                 ),
                 id="page-sim",
@@ -1104,5 +1109,6 @@ def create_layout() -> html.Div:
             # 多段リスタ: 総ヒット数 (区間描画用)
             dcc.Store(id="restart-nhits", data=0),
         ],
+        className="app-root",
         style={"maxWidth": "1200px", "margin": "0 auto", "padding": "20px", "fontFamily": "sans-serif"},
     )

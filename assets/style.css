@@ -168,3 +168,41 @@ table.restart-cards th { background: #ffe0e0; }
    (Dash 4 の dcc.Dropdown は左右 12px + gap 8px で値の表示域が細るため) */
 .so-step-row .dash-dropdown-trigger { padding: 0 8px; }
 .so-step-row .dash-dropdown-grid-container { gap: 4px; }
+
+/* ==========================================================================
+   モバイル対応 (幅 768px 以下)
+   レイアウトの主要コンテナはインラインスタイルで指定されているため、
+   ここでは !important で上書きする。
+   ========================================================================== */
+@media (max-width: 768px) {
+  /* 全体の余白を詰める */
+  .app-root { padding: 10px !important; }
+
+  /* ヘッダ: タイトルを縮小し、右側ブロックは折り返して下段へ */
+  .app-header h1 { font-size: 1.15rem; line-height: 1.3; }
+
+  /* ナビ: ボタンを小さくし、収まらなければ折り返す */
+  .nav-bar { flex-wrap: wrap !important; }
+  .nav-btn { padding: 6px 10px; font-size: 0.82rem; }
+
+  /* シミュレータ: サイドバー + メインを縦積みにする */
+  .main-flex { flex-direction: column !important; }
+  .main-flex > .sim-sidebar {
+    position: static !important;
+    width: 100% !important;
+  }
+  .sim-sidebar.collapsed { display: none; }
+
+  /* スキル順探索: 手順行は折り返し可(メモが2行目に回る) */
+  .so-step-row { flex-wrap: wrap; row-gap: 4px; }
+  .so-step-row input[type="text"] { min-width: 140px; }
+
+  /* テーブルがはみ出す場合は横スクロール */
+  #restart-cards-table { overflow-x: auto; }
+}
+
+/* さらに狭い画面 (幅 420px 以下): 手順行の生徒ドロップダウンを少し縮める
+   (dcc.Dropdown の style は外側 .dash-dropdown-wrapper に付くため :has で狙う) */
+@media (max-width: 420px) {
+  .dash-dropdown-wrapper:has(> .so-dd-skill) { width: 140px !important; }
+}
